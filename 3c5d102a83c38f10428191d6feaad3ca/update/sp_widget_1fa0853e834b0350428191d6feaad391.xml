@@ -1,0 +1,855 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sp_widget">
+    <sp_widget action="INSERT_OR_UPDATE">
+        <category>custom</category>
+        <client_script><![CDATA[api.controller=function($sce) {
+  var c = this;
+
+  // ── PAGE IDs ──────────────────────────────────────────────
+  var PAGE_IDS = {
+    home:           'test_catalog',
+    myAppointments: 'my_appointments'
+  };
+
+  c.loading         = false;
+  c.searchQuery     = '';
+  c.sortBy          = 'date_desc';
+  c.filteredReports = [];
+  c.showModal       = false;
+  c.selectedReport  = null;
+
+  c.stats = [
+    { icon: ']]>📄<![CDATA[', label: 'Total Reports',  count: 0 },
+    { icon: '✅', label: 'Ready',           count: 0 },
+    { icon: '⏳', label: 'Pending',         count: 0 },
+    { icon: ']]>🔬<![CDATA[', label: 'Tests Completed', count: 0 }
+  ];
+
+  // ── TRUST HTML FINDINGS ───────────────────────────────────
+  // Converts raw HTML string in findings to trusted HTML so
+  // ng-bind-html renders the formatted table instead of plain text
+  var trustFindings = function(reports) {
+    reports.forEach(function(r) {
+      if (r.findings && typeof r.findings === 'string') {
+        r.findings = $sce.trustAsHtml(r.findings);
+      }
+    });
+  };
+
+  // ── NAVIGATION ────────────────────────────────────────────
+  var _nav = function(pageId) {
+    var portalId = window.location.pathname.split('/')[1] || 'sp';
+    window.location.href = '/' + portalId + '?id=' + pageId;
+  };
+
+  // ── INIT ──────────────────────────────────────────────────
+  c.$onInit = function() {
+    c.buildStats();
+    c.filterReports();
+  };
+
+  c.buildStats = function() {
+    var rpts = c.data.reports || [];
+    c.stats[0].count = rpts.length;
+    c.stats[1].count = rpts.filter(function(r) { return r.status === 'ready'; }).length;
+    c.stats[2].count = rpts.filter(function(r) { return r.status === 'pending'; }).length;
+    c.stats[3].count = rpts.filter(function(r) {
+      return r.status === 'completed' || r.status === 'ready';
+    }).length;
+  };
+
+  c.filterReports = function() {
+    var all = angular.copy(c.data.reports || []);
+    var q   = (c.searchQuery || '').toLowerCase();
+
+    c.filteredReports = all.filter(function(r) {
+      return !q ||
+        (r.test_name     && r.test_name.toLowerCase().indexOf(q)     !== -1) ||
+        (r.report_number && r.report_number.toLowerCase().indexOf(q) !== -1) ||
+        (r.doctor_name   && r.doctor_name.toLowerCase().indexOf(q)   !== -1);
+    });
+
+    c.filteredReports.sort(function(a, b) {
+      if (c.sortBy === 'date_asc')  return (a.report_date || '').localeCompare(b.report_date || '');
+      if (c.sortBy === 'date_desc') return (b.report_date || '').localeCompare(a.report_date || '');
+      if (c.sortBy === 'name')      return (a.test_name   || '').localeCompare(b.test_name   || '');
+      return 0;
+    });
+
+    // ★ Trust HTML findings for all filtered reports so ng-bind-html renders properly
+    trustFindings(c.filteredReports);
+  };
+
+  // ── STATUS HELPERS ────────────────────────────────────────
+  var RPT_STATUS = {
+    'ready':      { color: '#10b981', bg: '#dcfce7', label: '✅ Ready'      },
+    'completed':  { color: '#10b981', bg: '#dcfce7', label: '✅ Completed'  },
+    'pending':    { color: '#f59e0b', bg: '#fef3c7', label: '⏳ Pending'    },
+    'processing': { color: '#3b82f6', bg: '#dbeafe', label: ']]>🔬<![CDATA[ Processing' }
+  };
+
+  var _rptProp = function(s, prop, fallback) {
+    return (RPT_STATUS[s] && RPT_STATUS[s][prop]) ? RPT_STATUS[s][prop] : fallback;
+  };
+
+  c.getStatusColor = function(s) { return _rptProp(s, 'color', '#94a3b8'); };
+  c.getStatusBg    = function(s) { return _rptProp(s, 'bg',    '#f1f5f9'); };
+  c.getStatusLabel = function(s) { return _rptProp(s, 'label', s || 'Ready'); };
+
+  c.getCategoryIcon = function(cat) {
+    var icons = {
+      'blood':      ']]>🩸<![CDATA[',
+      'urine':      ']]>🧪<![CDATA[',
+      'imaging':    ']]>🩻<![CDATA[',
+      'radiology':  ']]>🩻<![CDATA[',
+      'cardiology': '❤️',
+      'neurology':  ']]>🧠<![CDATA[',
+      'genetics':   ']]>🧬<![CDATA[',
+      'pathology':  ']]>🔬<![CDATA['
+    };
+    if (!cat) return ']]>🔬<![CDATA[';
+    var k = cat.toLowerCase();
+    for (var key in icons) { if (k.indexOf(key) !== -1) return icons[key]; }
+    return ']]>🔬<![CDATA[';
+  };
+
+  // ── MODAL ─────────────────────────────────────────────────
+  c.viewDetail = function(report) {
+    // Use angular.copy so modal has its own independent copy
+    c.selectedReport = angular.copy(report);
+
+    // ★ Trust HTML findings for the modal view
+    if (c.selectedReport.findings && typeof c.selectedReport.findings === 'string') {
+      c.selectedReport.findings = $sce.trustAsHtml(c.selectedReport.findings);
+    }
+
+    c.showModal = true;
+  };
+
+  c.closeModal = function() {
+    c.showModal      = false;
+    c.selectedReport = null;
+  };
+
+  c.downloadReport = function(report) {
+    if (report && report.report_url) {
+      window.open(report.report_url, '_blank');
+    } else {
+      alert('Report file is not yet available for download.');
+    }
+  };
+
+  // ── NAVIGATION ────────────────────────────────────────────
+  c.goHome     = function() { _nav(PAGE_IDS.home); };
+  c.goBookings = function() { _nav(PAGE_IDS.myAppointments); };
+}]]></client_script>
+        <controller_as>c</controller_as>
+        <css>.lab-reports {&#13;
+  --primary: #0a2463;&#13;
+  --accent: #00b4d8;&#13;
+  --success: #10b981;&#13;
+  --warning: #f59e0b;&#13;
+  --danger: #ef4444;&#13;
+  --info: #3b82f6;&#13;
+  --gray-50: #f8fafc;&#13;
+  --gray-100: #f1f5f9;&#13;
+  --gray-200: #e2e8f0;&#13;
+  --gray-400: #94a3b8;&#13;
+  --gray-600: #475569;&#13;
+  --gray-800: #1e293b;&#13;
+  --white: #ffffff;&#13;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.07);&#13;
+  --shadow-md: 0 4px 14px rgba(0,0,0,0.09);&#13;
+  --radius: 14px;&#13;
+  font-family: 'Segoe UI', system-ui, sans-serif;&#13;
+  background: var(--gray-50);&#13;
+  min-height: 100vh;&#13;
+  padding: 0 0 60px;&#13;
+}&#13;
+&#13;
+/* HEADER */&#13;
+.rpt-header {&#13;
+  background: linear-gradient(135deg, var(--primary) 0%, #1e3a8a 100%);&#13;
+  padding: 40px 40px 50px;&#13;
+  display: flex;&#13;
+  align-items: flex-start;&#13;
+  justify-content: space-between;&#13;
+  border-radius: 0 0 32px 32px;&#13;
+  flex-wrap: wrap;&#13;
+  gap: 20px;&#13;
+}&#13;
+.rpt-title { font-size: 32px; font-weight: 800; color: #fff; margin: 0 0 8px; }&#13;
+.rpt-sub   { color: #bfdbfe; margin: 0; font-size: 15px; }&#13;
+.rpt-header-right { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }&#13;
+&#13;
+.btn-back-home, .btn-my-bookings {&#13;
+  display: inline-flex; align-items: center; gap: 8px;&#13;
+  padding: 10px 20px; border: none; border-radius: 10px;&#13;
+  font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s;&#13;
+}&#13;
+.btn-back-home {&#13;
+  background: rgba(255,255,255,0.15);&#13;
+  color: #fff; border: 1px solid rgba(255,255,255,0.3);&#13;
+}&#13;
+.btn-back-home:hover { background: rgba(255,255,255,0.25); }&#13;
+.btn-my-bookings {&#13;
+  background: var(--accent); color: #fff;&#13;
+  box-shadow: 0 4px 14px rgba(0,180,216,0.35);&#13;
+}&#13;
+.btn-my-bookings:hover { transform: translateY(-2px); }&#13;
+&#13;
+/* STATS BAR */&#13;
+.rpt-stats-bar { display: flex; gap: 16px; padding: 24px 40px 0; flex-wrap: wrap; }&#13;
+.rpt-stat-card {&#13;
+  flex: 1; min-width: 120px; background: var(--white);&#13;
+  border-radius: var(--radius); border: 1px solid var(--gray-200);&#13;
+  padding: 16px 20px; display: flex; align-items: center; gap: 14px;&#13;
+  box-shadow: var(--shadow-sm);&#13;
+}&#13;
+.rpt-stat-icon { font-size: 28px; }&#13;
+.rpt-stat-info { display: flex; flex-direction: column; }&#13;
+.rpt-stat-val  { font-size: 22px; font-weight: 800; color: var(--primary); line-height: 1; }&#13;
+.rpt-stat-name { font-size: 12px; color: var(--gray-600); margin-top: 2px; }&#13;
+&#13;
+/* CONTROLS */&#13;
+.rpt-controls {&#13;
+  display: flex; align-items: center; gap: 12px;&#13;
+  padding: 20px 40px; flex-wrap: wrap;&#13;
+}&#13;
+.rpt-search-wrap {&#13;
+  position: relative; flex: 1; max-width: 400px;&#13;
+}&#13;
+.rpt-search-wrap .fa {&#13;
+  position: absolute; left: 12px; top: 50%;&#13;
+  transform: translateY(-50%); color: var(--gray-400);&#13;
+}&#13;
+.rpt-search {&#13;
+  padding: 10px 14px 10px 36px; border: 2px solid var(--gray-200);&#13;
+  border-radius: 10px; font-size: 14px; width: 100%; outline: none;&#13;
+  transition: border-color 0.2s; box-sizing: border-box;&#13;
+}&#13;
+.rpt-search:focus { border-color: var(--accent); }&#13;
+.rpt-sort {&#13;
+  padding: 10px 14px; border: 2px solid var(--gray-200);&#13;
+  border-radius: 10px; font-size: 14px; background: var(--white);&#13;
+  cursor: pointer; outline: none;&#13;
+}&#13;
+.rpt-sort:focus { border-color: var(--accent); }&#13;
+&#13;
+/* LOADING */&#13;
+.rpt-loading { text-align: center; padding: 60px; color: var(--gray-600); }&#13;
+.spinner-ring {&#13;
+  display: inline-block; width: 44px; height: 44px;&#13;
+  border: 4px solid var(--gray-200); border-top-color: var(--accent);&#13;
+  border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 14px;&#13;
+}&#13;
+@keyframes spin { to { transform: rotate(360deg); } }&#13;
+&#13;
+/* EMPTY */&#13;
+.rpt-empty { text-align: center; padding: 60px 40px; }&#13;
+.rpt-empty-icon { font-size: 56px; margin-bottom: 16px; }&#13;
+.rpt-empty h3 { font-size: 20px; color: var(--gray-800); margin: 0 0 8px; }&#13;
+.rpt-empty p  { color: var(--gray-600); margin: 0 0 20px; }&#13;
+.btn-book-test {&#13;
+  padding: 12px 28px; background: var(--primary); color: #fff;&#13;
+  border: none; border-radius: 10px; font-size: 15px; font-weight: 700;&#13;
+  cursor: pointer; transition: background 0.2s;&#13;
+}&#13;
+.btn-book-test:hover { background: #1e3a8a; }&#13;
+&#13;
+/* REPORTS LIST */&#13;
+.rpt-list { padding: 8px 40px; display: flex; flex-direction: column; gap: 16px; }&#13;
+&#13;
+/* REPORT CARD */&#13;
+.rpt-card {&#13;
+  background: var(--white); border-radius: var(--radius);&#13;
+  border: 1px solid var(--gray-200); display: flex; overflow: hidden;&#13;
+  box-shadow: var(--shadow-sm); transition: box-shadow 0.2s, transform 0.2s;&#13;
+}&#13;
+.rpt-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }&#13;
+.rpt-card-accent { width: 5px; flex-shrink: 0; }&#13;
+.rpt-card-content { flex: 1; padding: 20px 24px; }&#13;
+&#13;
+/* TOP ROW */&#13;
+.rpt-card-top {&#13;
+  display: flex; align-items: flex-start; justify-content: space-between;&#13;
+  margin-bottom: 14px; gap: 12px; flex-wrap: wrap;&#13;
+}&#13;
+.rpt-card-title-group { display: flex; align-items: center; gap: 14px; }&#13;
+.rpt-icon { font-size: 32px; }&#13;
+.rpt-test-name { font-size: 17px; font-weight: 700; color: var(--gray-800); margin: 0 0 4px; }&#13;
+.rpt-number { font-size: 12px; color: var(--gray-400); font-family: 'Courier New', monospace; }&#13;
+.rpt-status-wrap { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }&#13;
+.rpt-status-pill {&#13;
+  display: inline-flex; align-items: center; gap: 5px;&#13;
+  padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 700;&#13;
+}&#13;
+&#13;
+/* META */&#13;
+.rpt-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }&#13;
+.rpt-meta-chip {&#13;
+  display: inline-flex; align-items: center; gap: 5px;&#13;
+  font-size: 13px; color: var(--gray-600); background: var(--gray-100);&#13;
+  padding: 4px 10px; border-radius: 6px;&#13;
+}&#13;
+.rpt-meta-chip .fa { color: var(--accent); font-size: 12px; }&#13;
+&#13;
+/* FINDINGS — container */&#13;
+.rpt-findings {&#13;
+  background: #f0f9ff;&#13;
+  border-left: 3px solid var(--accent);&#13;
+  border-radius: 0 8px 8px 0;&#13;
+  padding: 12px 16px;&#13;
+  margin-bottom: 12px;&#13;
+  overflow-x: auto;&#13;
+}&#13;
+.rpt-findings-label {&#13;
+  font-size: 11px; font-weight: 700; color: var(--accent);&#13;
+  margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;&#13;
+}&#13;
+&#13;
+/* Rich HTML body inside findings (card view) */&#13;
+.rpt-findings-body { font-size: 13px; color: var(--gray-800); }&#13;
+&#13;
+.rpt-findings-body h3 {&#13;
+  font-size: 15px; font-weight: 700; color: var(--primary);&#13;
+  margin: 0 0 10px; padding-bottom: 6px;&#13;
+  border-bottom: 2px solid var(--accent);&#13;
+}&#13;
+.rpt-findings-body p { margin: 8px 0; font-size: 13px; color: var(--gray-600); }&#13;
+.rpt-findings-body strong { color: var(--gray-800); }&#13;
+&#13;
+/* Table inside findings */&#13;
+.rpt-findings-body table,&#13;
+.rpt-modal-findings table {&#13;
+  width: 100%;&#13;
+  border-collapse: collapse;&#13;
+  font-size: 13px;&#13;
+  margin: 8px 0;&#13;
+  background: var(--white);&#13;
+  border-radius: 8px;&#13;
+  overflow: hidden;&#13;
+  box-shadow: var(--shadow-sm);&#13;
+}&#13;
+.rpt-findings-body table thead tr,&#13;
+.rpt-modal-findings table thead tr {&#13;
+  background: var(--primary);&#13;
+  color: #fff;&#13;
+}&#13;
+.rpt-findings-body table th,&#13;
+.rpt-modal-findings table th {&#13;
+  padding: 10px 14px;&#13;
+  text-align: left;&#13;
+  font-size: 12px;&#13;
+  font-weight: 700;&#13;
+  letter-spacing: 0.3px;&#13;
+  border: none;&#13;
+}&#13;
+.rpt-findings-body table td,&#13;
+.rpt-modal-findings table td {&#13;
+  padding: 9px 14px;&#13;
+  border-bottom: 1px solid var(--gray-100);&#13;
+  color: var(--gray-800);&#13;
+  vertical-align: middle;&#13;
+}&#13;
+.rpt-findings-body table tbody tr:last-child td,&#13;
+.rpt-modal-findings table tbody tr:last-child td {&#13;
+  border-bottom: none;&#13;
+}&#13;
+.rpt-findings-body table tbody tr:nth-child(even),&#13;
+.rpt-modal-findings table tbody tr:nth-child(even) {&#13;
+  background: var(--gray-50);&#13;
+}&#13;
+.rpt-findings-body table tbody tr:hover,&#13;
+.rpt-modal-findings table tbody tr:hover {&#13;
+  background: #e0f2fe;&#13;
+  transition: background 0.15s;&#13;
+}&#13;
+&#13;
+/* Status text colours inside findings table (Normal / Abnormal) */&#13;
+.rpt-findings-body td:last-child,&#13;
+.rpt-modal-findings td:last-child {&#13;
+  font-weight: 700;&#13;
+}&#13;
+&#13;
+/* REMARKS */&#13;
+.rpt-remarks {&#13;
+  font-size: 13px; color: var(--gray-600); background: var(--gray-50);&#13;
+  border-left: 3px solid var(--gray-200); padding: 6px 12px; margin-bottom: 12px;&#13;
+  border-radius: 0 6px 6px 0;&#13;
+}&#13;
+&#13;
+/* ACTIONS */&#13;
+.rpt-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }&#13;
+.rpt-btn {&#13;
+  display: inline-flex; align-items: center; gap: 6px;&#13;
+  padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;&#13;
+  cursor: pointer; border: none; transition: all 0.2s;&#13;
+}&#13;
+.btn-view-detail { background: #dbeafe; color: #1d4ed8; }&#13;
+.btn-view-detail:hover { background: #bfdbfe; }&#13;
+.btn-download { background: #dcfce7; color: #166534; }&#13;
+.btn-download:hover { background: #bbf7d0; }&#13;
+.btn-close-modal { background: var(--primary); color: #fff; }&#13;
+.btn-close-modal:hover { background: #1e3a8a; }&#13;
+.rpt-appt-link { margin-left: auto; font-size: 11px; color: var(--gray-400); }&#13;
+&#13;
+/* MODAL */&#13;
+.rpt-modal-overlay {&#13;
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);&#13;
+  z-index: 9999; display: flex; align-items: center;&#13;
+  justify-content: center; padding: 20px;&#13;
+}&#13;
+.rpt-modal-box {&#13;
+  background: var(--white); border-radius: 20px;&#13;
+  max-width: 680px; width: 100%; overflow: hidden;&#13;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);&#13;
+  animation: slideUp 0.3s ease;&#13;
+  max-height: 90vh;&#13;
+  display: flex;&#13;
+  flex-direction: column;&#13;
+}&#13;
+@keyframes slideUp {&#13;
+  from { opacity: 0; transform: translateY(20px); }&#13;
+  to   { opacity: 1; transform: translateY(0); }&#13;
+}&#13;
+.rpt-modal-header {&#13;
+  display: flex; align-items: center; justify-content: space-between;&#13;
+  padding: 20px 24px; background: var(--primary); color: #fff;&#13;
+  flex-shrink: 0;&#13;
+}&#13;
+.rpt-modal-header h3 { margin: 0; font-size: 18px; }&#13;
+.rpt-modal-close {&#13;
+  background: none; border: none; color: #fff;&#13;
+  font-size: 20px; cursor: pointer; opacity: 0.8;&#13;
+}&#13;
+.rpt-modal-close:hover { opacity: 1; }&#13;
+.rpt-modal-body { padding: 24px; overflow-y: auto; flex: 1; }&#13;
+.rpt-modal-footer {&#13;
+  padding: 16px 24px; border-top: 1px solid var(--gray-100);&#13;
+  display: flex; justify-content: flex-end; gap: 10px;&#13;
+  flex-shrink: 0;&#13;
+}&#13;
+&#13;
+/* Rich HTML findings inside modal */&#13;
+.rpt-modal-findings {&#13;
+  margin-top: 6px;&#13;
+  font-size: 13px;&#13;
+  color: var(--gray-800);&#13;
+  overflow-x: auto;&#13;
+}&#13;
+.rpt-modal-findings h3 {&#13;
+  font-size: 15px; font-weight: 700; color: var(--primary);&#13;
+  margin: 0 0 10px; padding-bottom: 6px;&#13;
+  border-bottom: 2px solid var(--accent);&#13;
+}&#13;
+.rpt-modal-findings p { margin: 8px 0; color: var(--gray-600); }&#13;
+&#13;
+/* DETAIL GRID */&#13;
+.rpt-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }&#13;
+.rpt-detail-item { display: flex; flex-direction: column; gap: 4px; }&#13;
+.rpt-detail-item.full { grid-column: 1 / -1; }&#13;
+.rpt-detail-key {&#13;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;&#13;
+  color: var(--gray-400); letter-spacing: 0.4px;&#13;
+}&#13;
+.rpt-detail-val { font-size: 14px; font-weight: 600; color: var(--gray-800); }&#13;
+.rpt-detail-val.mono { font-family: 'Courier New', monospace; color: var(--primary); }&#13;
+&#13;
+/* RESPONSIVE */&#13;
+@media (max-width: 768px) {&#13;
+  .rpt-header, .rpt-stats-bar, .rpt-controls, .rpt-list {&#13;
+    padding-left: 16px; padding-right: 16px;&#13;
+  }&#13;
+  .rpt-card-top { flex-direction: column; }&#13;
+  .rpt-detail-grid { grid-template-columns: 1fr; }&#13;
+  .rpt-modal-box { max-width: 100%; }&#13;
+}</css>
+        <data_table>sp_instance</data_table>
+        <demo_data/>
+        <description>Widget to display and manage functionalities</description>
+        <docs/>
+        <field_list/>
+        <has_preview>false</has_preview>
+        <id>lab_reports</id>
+        <internal>false</internal>
+        <link><![CDATA[function link(scope, element, attrs, controller) {
+  
+}]]></link>
+        <name>Lab Reports</name>
+        <option_schema/>
+        <public>true</public>
+        <roles/>
+        <script><![CDATA[(function() {
+  data.reports = [];
+
+  try {
+    var userID    = gs.getUserID();
+    var userEmail = gs.getUser().getEmail() || '';
+
+    // ── STEP 1: Collect ALL patient sys_ids for this user ─────────────
+
+    var patientMap    = {};
+    var patientSysIds = [];
+
+    // A) By user reference field on patient table
+    var p1 = new GlideRecord('x_2056539_medica_0_patient');
+    p1.addQuery('user', userID);
+    p1.query();
+    while (p1.next()) {
+      var pid1 = p1.getUniqueValue();
+      if (!patientMap[pid1]) { patientMap[pid1] = true; patientSysIds.push(pid1); }
+    }
+
+    // B) By email match
+    if (userEmail) {
+      var p2 = new GlideRecord('x_2056539_medica_0_patient');
+      p2.addQuery('email', userEmail);
+      p2.query();
+      while (p2.next()) {
+        var pid2 = p2.getUniqueValue();
+        if (!patientMap[pid2]) { patientMap[pid2] = true; patientSysIds.push(pid2); }
+      }
+    }
+
+    // C) Find patients via appointments created by this user
+    var a1 = new GlideRecord('x_2056539_medica_0_appointment_table');
+    a1.addQuery('created_by', userID);
+    a1.query();
+    while (a1.next()) {
+      var pRef = a1.getValue('patient');
+      if (pRef && !patientMap[pRef]) {
+        patientMap[pRef] = true;
+        patientSysIds.push(pRef);
+      }
+    }
+
+    if (patientSysIds.length === 0) {
+      data.reports = [];
+      return;
+    }
+
+    // ── STEP 2: Query reports by patient field ────────────────────────
+
+    var reportGr = new GlideRecord('x_2056539_medica_0_report_table');
+    reportGr.addQuery('patient', 'IN', patientSysIds.join(','));
+    reportGr.orderByDesc('sys_created_on');
+    reportGr.query();
+
+    while (reportGr.next()) {
+
+      // Get appointment details — number, test name, category, test date
+      var testName        = '';
+      var testCategory    = '';
+      var apptNum         = '';
+      var testDateRaw     = '';
+      var testDateDisplay = '';
+      var apptRef         = reportGr.getValue('appointment');
+
+      if (apptRef) {
+        var apptGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+        if (apptGr.get(apptRef)) {
+          apptNum = apptGr.getValue('appointment_number') || '';
+
+          // Try common date field names on appointment table
+          var rawApptDate = apptGr.getValue('appointment_date')
+                         || apptGr.getValue('scheduled_date')
+                         || apptGr.getValue('test_date')
+                         || apptGr.getValue('date')
+                         || '';
+
+          if (rawApptDate) {
+            testDateRaw = rawApptDate;
+            try {
+              testDateDisplay = new GlideDateTime(rawApptDate).getLocalDate().getValue();
+            } catch(de) {
+              testDateDisplay = rawApptDate.split(' ')[0] || rawApptDate;
+            }
+          }
+
+          // Test name and category from linked diagnostic test
+          var testRef = apptGr.getValue('test');
+          if (testRef) {
+            var testGr = new GlideRecord('x_2056539_medica_0_diagnostic_test');
+            if (testGr.get(testRef)) {
+              testName     = testGr.getValue('test_name') || '';
+              testCategory = testGr.getDisplayValue('category') || testGr.getValue('category') || '';
+            }
+          }
+        }
+      }
+
+      // Verified by / doctor name
+      var doctorName  = '';
+      var verifiedRef = reportGr.getValue('verified_by');
+      if (verifiedRef) {
+        var docGr = new GlideRecord('sys_user');
+        if (docGr.get(verifiedRef)) {
+          doctorName = docGr.getDisplayValue('name') || '';
+        }
+      }
+
+      // Format report date
+      var reportDateRaw     = reportGr.getValue('report_date') || '';
+      var reportDateDisplay = '';
+      if (reportDateRaw) {
+        try {
+          reportDateDisplay = new GlideDateTime(reportDateRaw).getLocalDate().getValue();
+        } catch(de) {
+          reportDateDisplay = reportDateRaw.split(' ')[0] || reportDateRaw;
+        }
+      }
+
+      // Status
+      var rptStatus = 'ready';
+      try {
+        var sv = reportGr.getValue('status');
+        if (sv) rptStatus = sv;
+      } catch(se) { /* field doesn't exist, use default */ }
+
+      // Findings — preserve full HTML for rich table display
+      var findingsHTML = '';
+      try {
+        findingsHTML = reportGr.getHTMLValue('findings') || '';
+      } catch(fe) {
+        findingsHTML = reportGr.getValue('findings') || '';
+      }
+
+      data.reports.push({
+        sys_id:              reportGr.getUniqueValue(),
+        report_number:       reportGr.getValue('report_number') || '',
+        status:              rptStatus,
+        findings:            findingsHTML,
+        test_date:           testDateRaw,
+        test_date_display:   testDateDisplay,
+        report_date:         reportDateRaw,
+        report_date_display: reportDateDisplay,
+        doctor_name:         doctorName,
+        report_url:          '',
+        test_name:           testName || ('Report ' + (reportGr.getValue('report_number') || '')),
+        test_category:       testCategory,
+        appointment_number:  apptNum
+      });
+    }
+
+  } catch(e) {
+    gs.error('Lab Reports Widget Error: ' + e.message);
+    data.error   = e.message;
+    data.reports = [];
+  }
+
+})();]]></script>
+        <servicenow>false</servicenow>
+        <sys_class_name>sp_widget</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 10:25:16</sys_created_on>
+        <sys_id>1fa0853e834b0350428191d6feaad391</sys_id>
+        <sys_mod_count>3</sys_mod_count>
+        <sys_name>Lab Reports</sys_name>
+        <sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope>
+        <sys_update_name>sp_widget_1fa0853e834b0350428191d6feaad391</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 11:27:17</sys_updated_on>
+        <template><![CDATA[<div class="lab-reports">
+
+  <!-- HEADER -->
+  <div class="rpt-header">
+    <div class="rpt-header-left">
+      <h1 class="rpt-title">]]>📄<![CDATA[ My Lab Reports</h1>
+      <p class="rpt-sub">View and download your diagnostic test results.</p>
+    </div>
+    <div class="rpt-header-right">
+      <button class="btn-back-home" ng-click="c.goHome()">
+        <i class="fa fa-home"></i> Home
+      </button>
+      <button class="btn-my-bookings" ng-click="c.goBookings()">
+        <i class="fa fa-calendar"></i> My Bookings
+      </button>
+    </div>
+  </div>
+
+  <!-- STATS BAR -->
+  <div class="rpt-stats-bar">
+    <div class="rpt-stat-card" ng-repeat="stat in c.stats">
+      <span class="rpt-stat-icon">{{stat.icon}}</span>
+      <div class="rpt-stat-info">
+        <span class="rpt-stat-val">{{stat.count}}</span>
+        <span class="rpt-stat-name">{{stat.label}}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="rpt-controls">
+    <div class="rpt-search-wrap">
+      <i class="fa fa-search"></i>
+      <input type="text" class="rpt-search" placeholder="Search by test name or report number..."
+        ng-model="c.searchQuery" ng-change="c.filterReports()" />
+    </div>
+    <select class="rpt-sort" ng-model="c.sortBy" ng-change="c.filterReports()">
+      <option value="date_desc">Newest First</option>
+      <option value="date_asc">Oldest First</option>
+      <option value="name">By Test Name</option>
+    </select>
+  </div>
+
+  <!-- LOADING -->
+  <div class="rpt-loading" ng-if="c.loading">
+    <div class="spinner-ring"></div>
+    <p>Loading your reports...</p>
+  </div>
+
+  <!-- EMPTY STATE -->
+  <div class="rpt-empty" ng-if="!c.loading && c.filteredReports.length === 0">
+    <div class="rpt-empty-icon">]]>📭<![CDATA[</div>
+    <h3>No reports found</h3>
+    <p ng-if="c.searchQuery">No reports match your search.</p>
+    <p ng-if="!c.searchQuery">Your lab reports will appear here once they are uploaded by the diagnostic center.</p>
+    <button class="btn-book-test" ng-click="c.goHome()">Browse Tests</button>
+  </div>
+
+  <!-- REPORTS LIST -->
+  <div class="rpt-list" ng-if="!c.loading && c.filteredReports.length > 0">
+    <div class="rpt-card" ng-repeat="report in c.filteredReports">
+
+      <!-- STATUS BAR -->
+      <div class="rpt-card-accent" ng-style="{'background': c.getStatusColor(report.status)}"></div>
+
+      <div class="rpt-card-content">
+        <!-- TOP ROW -->
+        <div class="rpt-card-top">
+          <div class="rpt-card-title-group">
+            <span class="rpt-icon">{{c.getCategoryIcon(report.test_category)}}</span>
+            <div>
+              <h3 class="rpt-test-name" ng-bind="report.test_name"></h3>
+              <span class="rpt-number" ng-bind="report.report_number"></span>
+            </div>
+          </div>
+          <div class="rpt-status-wrap">
+            <span class="rpt-status-pill"
+              ng-style="{'background': c.getStatusBg(report.status), 'color': c.getStatusColor(report.status)}">
+              {{c.getStatusLabel(report.status)}}
+            </span>
+          </div>
+        </div>
+
+        <!-- META -->
+        <div class="rpt-meta">
+          <div class="rpt-meta-chip">
+            <i class="fa fa-calendar"></i>
+            <span>Test Date: {{report.test_date_display || 'N/A'}}</span>
+          </div>
+          <div class="rpt-meta-chip">
+            <i class="fa fa-clock-o"></i>
+            <span>Report Date: {{report.report_date_display || 'N/A'}}</span>
+          </div>
+          <div class="rpt-meta-chip" ng-if="report.doctor_name">
+            <i class="fa fa-user-md"></i>
+            <span>Dr. {{report.doctor_name}}</span>
+          </div>
+          <div class="rpt-meta-chip" ng-if="report.test_category">
+            <i class="fa fa-tag"></i>
+            <span>{{report.test_category}}</span>
+          </div>
+        </div>
+
+        <!-- SUMMARY / FINDINGS — rendered as rich HTML -->
+        <div class="rpt-findings" ng-if="report.findings">
+          <div class="rpt-findings-label"><i class="fa fa-file-text-o"></i> Findings</div>
+          <div class="rpt-findings-body" ng-bind-html="report.findings"></div>
+        </div>
+
+        <!-- REMARKS -->
+        <div class="rpt-remarks" ng-if="report.remarks">
+          <i class="fa fa-comment-o"></i> <em ng-bind="report.remarks"></em>
+        </div>
+
+        <!-- ACTIONS -->
+        <div class="rpt-actions">
+          <button class="rpt-btn btn-view-detail" ng-click="c.viewDetail(report)">
+            <i class="fa fa-eye"></i> View Details
+          </button>
+          <button class="rpt-btn btn-download" ng-if="report.report_url" ng-click="c.downloadReport(report)">
+            <i class="fa fa-download"></i> Download Report
+          </button>
+          <span class="rpt-appt-link" ng-if="report.appointment_number">
+            Booking: <strong ng-bind="report.appointment_number"></strong>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DETAIL MODAL -->
+  <div class="rpt-modal-overlay" ng-if="c.showModal" ng-click="c.closeModal()">
+    <div class="rpt-modal-box" ng-click="$event.stopPropagation()">
+      <div class="rpt-modal-header">
+        <h3>Report Details</h3>
+        <button class="rpt-modal-close" ng-click="c.closeModal()">✕</button>
+      </div>
+      <div class="rpt-modal-body" ng-if="c.selectedReport">
+        <div class="rpt-detail-grid">
+          <div class="rpt-detail-item">
+            <span class="rpt-detail-key">Report #</span>
+            <span class="rpt-detail-val mono" ng-bind="c.selectedReport.report_number"></span>
+          </div>
+          <div class="rpt-detail-item">
+            <span class="rpt-detail-key">Status</span>
+            <span class="rpt-detail-val">
+              <span class="rpt-status-pill"
+                ng-style="{'background': c.getStatusBg(c.selectedReport.status), 'color': c.getStatusColor(c.selectedReport.status)}">
+                {{c.getStatusLabel(c.selectedReport.status)}}
+              </span>
+            </span>
+          </div>
+          <div class="rpt-detail-item">
+            <span class="rpt-detail-key">Test Name</span>
+            <span class="rpt-detail-val" ng-bind="c.selectedReport.test_name"></span>
+          </div>
+          <div class="rpt-detail-item">
+            <span class="rpt-detail-key">Category</span>
+            <span class="rpt-detail-val" ng-bind="c.selectedReport.test_category"></span>
+          </div>
+          <div class="rpt-detail-item">
+            <span class="rpt-detail-key">Test Date</span>
+            <span class="rpt-detail-val" ng-bind="c.selectedReport.test_date_display"></span>
+          </div>
+          <div class="rpt-detail-item">
+            <span class="rpt-detail-key">Report Date</span>
+            <span class="rpt-detail-val" ng-bind="c.selectedReport.report_date_display"></span>
+          </div>
+          <div class="rpt-detail-item">
+            <span class="rpt-detail-key">Doctor</span>
+            <span class="rpt-detail-val" ng-bind="c.selectedReport.doctor_name || 'N/A'"></span>
+          </div>
+          <div class="rpt-detail-item">
+            <span class="rpt-detail-key">Appointment #</span>
+            <span class="rpt-detail-val mono" ng-bind="c.selectedReport.appointment_number || 'N/A'"></span>
+          </div>
+          <!-- Findings rendered as rich HTML in modal -->
+          <div class="rpt-detail-item full">
+            <span class="rpt-detail-key">Findings</span>
+            <div class="rpt-modal-findings" ng-if="c.selectedReport.findings" ng-bind-html="c.selectedReport.findings"></div>
+            <span class="rpt-detail-val" ng-if="!c.selectedReport.findings">None</span>
+          </div>
+          <div class="rpt-detail-item full">
+            <span class="rpt-detail-key">Remarks</span>
+            <span class="rpt-detail-val" ng-bind="c.selectedReport.remarks || 'None'"></span>
+          </div>
+        </div>
+      </div>
+      <div class="rpt-modal-footer">
+        <button class="rpt-btn btn-download"
+          ng-if="c.selectedReport && c.selectedReport.report_url"
+          ng-click="c.downloadReport(c.selectedReport)">
+          <i class="fa fa-download"></i> Download Report
+        </button>
+        <button class="rpt-btn btn-close-modal" ng-click="c.closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+</div>]]></template>
+    </sp_widget>
+</record_update>

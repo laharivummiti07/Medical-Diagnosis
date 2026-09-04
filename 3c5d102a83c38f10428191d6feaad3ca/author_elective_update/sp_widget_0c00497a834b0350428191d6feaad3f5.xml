@@ -1,0 +1,2329 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sp_widget">
+    <sp_widget action="DELETE">
+        <category>custom</category>
+        <client_script><![CDATA[api.controller=function($timeout) {
+  var c = this;
+
+  // ── PAGE IDs (confirmed from your ServiceNow Pages list) ──
+  var PAGE_IDS = {
+    home:           'test_catalog',
+    myAppointments: 'my_appointments',
+    labReports:     'lab_reports'
+  };
+
+  c.step = 1;
+  c.processing = false;
+  c.errors = {};
+  c.genderOpen = false;
+  c.bankOpen = false;
+  c.testPrice = '0.00';
+  c.validationMsg = '';
+
+  c.form = {
+    first_name: '', last_name: '', email: '', phone_number: '',
+    date_of_birth: '', gender: '', address: '',
+    scheduled_date: '', slot_time: '', notes: ''
+  };
+
+  c.payment = {
+    method: 'card',
+    card_name: '', card_number: '', expiry: '', cvv: '',
+    upi_id: '', upi_app: '',
+    bank: '',
+    insurance_provider: '', policy_number: ''
+  };
+
+  c.genderOptions = [
+    { value: 'male',              label: 'Male' },
+    { value: 'female',            label: 'Female' },
+    { value: 'other',             label: 'Other' },
+    { value: 'prefer_not_to_say', label: 'Prefer not to say' }
+  ];
+
+  c.bankOptions = [
+    { value: 'sbi',   label: 'State Bank of India' },
+    { value: 'hdfc',  label: 'HDFC Bank' },
+    { value: 'icici', label: 'ICICI Bank' },
+    { value: 'axis',  label: 'Axis Bank' },
+    { value: 'kotak', label: 'Kotak Mahindra Bank' },
+    { value: 'pnb',   label: 'Punjab National Bank' },
+    { value: 'bob',   label: 'Bank of Baroda' },
+    { value: 'other', label: 'Other Bank' }
+  ];
+
+  c.timeSlots = [
+    '08:00 AM','08:30 AM','09:00 AM','09:30 AM',
+    '10:00 AM','10:30 AM','11:00 AM','11:30 AM',
+    '12:00 PM','12:30 PM','01:00 PM','01:30 PM',
+    '02:00 PM','02:30 PM','03:00 PM','03:30 PM',
+    '04:00 PM','04:30 PM','05:00 PM'
+  ];
+
+  // FIX: padStart() not always available in ServiceNow's JS engine — use manual pad
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+  var today = new Date();
+  c.minDate = today.getFullYear() + '-' + pad2(today.getMonth() + 1) + '-' + pad2(today.getDate());
+
+  // ── NAVIGATION ────────────────────────────────────────────
+  var _nav = function(pageId) {
+    var portalId = window.location.pathname.split('/')[1] || 'sp';
+    window.location.href = '/' + portalId + '?id=' + pageId;
+  };
+
+  // ── INIT ──────────────────────────────────────────────────
+  c.$onInit = function() {
+    var sysId    = sessionStorage.getItem('selected_test_sys_id')   || '';
+    var name     = sessionStorage.getItem('selected_test_name')     || '';
+    var price    = sessionStorage.getItem('selected_test_price')    || '0';
+    var code     = sessionStorage.getItem('selected_test_code')     || '';
+    var category = sessionStorage.getItem('selected_test_category') || 'General';
+    var duration = sessionStorage.getItem('selected_test_duration') || '';
+
+    if (sysId) {
+      var numPrice = parseFloat(price) || 0;
+      c.selectedTest = {
+        sys_id: sysId, test_name: name, price: numPrice,
+        test_code: code, category: category, test_duration: duration
+      };
+      c.testPrice = numPrice.toFixed(2);
+      ['selected_test_sys_id','selected_test_name','selected_test_price',
+       'selected_test_code','selected_test_category','selected_test_duration']
+        .forEach(function(k) { sessionStorage.removeItem(k); });
+    } else if (c.data && c.data.test) {
+      c.selectedTest = c.data.test;
+      c.testPrice = (parseFloat(c.data.test.price) || 0).toFixed(2);
+    }
+
+    if (c.data && c.data.currentUser) {
+      c.form.first_name   = c.data.currentUser.first_name || '';
+      c.form.last_name    = c.data.currentUser.last_name  || '';
+      c.form.email        = c.data.currentUser.email      || '';
+      c.form.phone_number = c.data.currentUser.phone      || '';
+    }
+  };
+
+  // ── DROPDOWN HELPERS ──────────────────────────────────────
+  c.getGenderLabel = function(val) {
+    for (var i = 0; i < c.genderOptions.length; i++) {
+      if (c.genderOptions[i].value === val) return c.genderOptions[i].label;
+    }
+    return '-- Select Gender --';
+  };
+  c.getBankLabel = function(val) {
+    for (var i = 0; i < c.bankOptions.length; i++) {
+      if (c.bankOptions[i].value === val) return c.bankOptions[i].label;
+    }
+    return '-- Select Bank --';
+  };
+  c.selectGender = function(val) { c.form.gender = val; c.genderOpen = false; c.clearError('gender'); };
+  c.selectBank   = function(val) { c.payment.bank = val; c.bankOpen = false; };
+  c.setPaymentMethod = function(method) { c.payment.method = method; c.bankOpen = false; c.genderOpen = false; };
+  c.selectUpiApp = function(app) { c.payment.upi_app = app; };
+
+  // ── MISC HELPERS ──────────────────────────────────────────
+  c.getCategoryIcon = function(cat) {
+    var icons = {
+      'blood':']]>🩸<![CDATA[','urine':']]>🧪<![CDATA[','imaging':']]>🩻<![CDATA[','radiology':']]>🩻<![CDATA[',
+      'cardiology':'❤️','neurology':']]>🧠<![CDATA[','genetics':']]>🧬<![CDATA[','pathology':']]>🔬<![CDATA[',
+      'biochemistry':'⚗️','allergy':']]>🌿<![CDATA[','microbiology':']]>🦠<![CDATA[','covid':']]>😷<![CDATA[',
+      'ecg':'❤️','x-ray':']]>🩻<![CDATA[','xray':']]>🩻<![CDATA[','diabetes':']]>💉<![CDATA[','thyroid':']]>🦋<![CDATA['
+    };
+    if (!cat) return ']]>🔬<![CDATA[';
+    var key = cat.toLowerCase();
+    for (var k in icons) { if (key.indexOf(k) !== -1) return icons[k]; }
+    return ']]>🔬<![CDATA[';
+  };
+
+  c.formatDateDisplay = function(dateStr) {
+    if (!dateStr) return '';
+    // Normalize: handle both string and Date object
+    if (typeof dateStr !== 'string') {
+      try { dateStr = dateStr.toISOString().split('T')[0]; } catch(e) { return ''; }
+    }
+    var parts = dateStr.split('-');
+    if (parts.length !== 3) return dateStr;
+    var yr = parseInt(parts[0], 10);
+    var mo = parseInt(parts[1], 10) - 1;
+    var dy = parseInt(parts[2], 10);
+    var d = new Date(yr, mo, dy);
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var days   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return days[d.getDay()] + ', ' + dy + ' ' + months[mo] + ' ' + yr;
+  };
+
+  c.getPaymentLabel = function(method) {
+    var labels = {
+      'card':'Credit/Debit Card','upi':'UPI Payment',
+      'netbanking':'Net Banking','insurance':'Insurance','cash':'Pay on Arrival'
+    };
+    return labels[method] || method;
+  };
+
+  c.selectSlot = function(slot) { c.form.slot_time = slot; c.clearError('slot_time'); };
+
+  c.onDateChange = function() { c.form.slot_time = ''; c.clearError('scheduled_date'); };
+
+  c.clearError = function(field) {
+    if (c.errors[field]) delete c.errors[field];
+    c.validationMsg = '';
+  };
+
+  // ── STEP NAVIGATION (direct — ng-click already triggers digest) ───
+  var _goToStep = function(n) {
+    c.step = n;
+    window.scrollTo(0, 0);
+  };
+
+  // ── STEP 1 VALIDATION ─────────────────────────────────────
+  c.validateStep1 = function() {
+    c.errors = {};
+    c.validationMsg = '';
+    var f = c.form;
+    var emailReg = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    var phoneReg = /^\+?[\d\s\-(). ]{7,20}$/;
+
+    if (!f.first_name || !f.first_name.trim()) c.errors.first_name   = 'First name is required';
+    if (!f.last_name  || !f.last_name.trim())  c.errors.last_name    = 'Last name is required';
+    if (!f.email      || !f.email.trim())      c.errors.email        = 'Email is required';
+    else if (!emailReg.test(f.email.trim()))   c.errors.email        = 'Enter a valid email';
+    if (!f.phone_number || !f.phone_number.trim()) c.errors.phone_number = 'Phone number is required';
+    else if (!phoneReg.test(f.phone_number.trim())) c.errors.phone_number = 'Enter a valid phone number';
+    if (!f.date_of_birth) c.errors.date_of_birth = 'Date of birth is required';
+    if (!f.gender)        c.errors.gender        = 'Please select a gender';
+
+    if (Object.keys(c.errors).length > 0) {
+      c.validationMsg = 'Please fill in all required fields marked below.';
+      window.scrollTo(0, 0);
+      return;
+    }
+    _goToStep(2);
+  };
+
+  // ── STEP 2 VALIDATION ─────────────────────────────────────
+  // KEY FIX: Robust date handling — works with string, Date object, or missing value
+  c.validateStep2 = function() {
+    c.errors = {};
+    c.validationMsg = '';
+
+    // Normalize the date value safely
+    var rawDate = c.form.scheduled_date;
+    var dateStr = '';
+
+    if (rawDate) {
+      if (typeof rawDate === 'string') {
+        dateStr = rawDate.trim();
+      } else if (rawDate instanceof Date) {
+        // ng-model on type="date" can return a Date object in some AngularJS builds
+        var yr = rawDate.getFullYear();
+        var mo = rawDate.getMonth() + 1;
+        var dy = rawDate.getDate();
+        dateStr = yr + '-' + pad2(mo) + '-' + pad2(dy);
+        c.form.scheduled_date = dateStr; // Normalize to string
+      } else {
+        dateStr = String(rawDate).trim();
+      }
+    }
+
+    if (!dateStr) {
+      c.errors.scheduled_date = 'Please select a date';
+    } else {
+      try {
+        var parts = dateStr.split('-');
+        if (parts.length === 3) {
+          var sel = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+          var now = new Date();
+          now.setHours(0, 0, 0, 0);
+          if (sel < now) c.errors.scheduled_date = 'Please select a future date';
+        }
+      } catch (ex) {
+        c.errors.scheduled_date = 'Invalid date selected';
+      }
+    }
+
+    if (!c.form.slot_time) {
+      c.errors.slot_time = 'Please select a time slot';
+    }
+
+    if (Object.keys(c.errors).length > 0) {
+      c.validationMsg = 'Please select a date and time slot before continuing.';
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    _goToStep(3);
+  };
+
+  // ── PAYMENT ───────────────────────────────────────────────
+  c.processPayment = function() {
+    c.processing = true;
+    $timeout(function() { c.submitBooking(); }, 1200);
+  };
+
+  c.submitBooking = function() {
+    c.server.get({
+      action: 'create_appointment',
+      data: {
+        form: c.form,
+        test_sys_id: c.selectedTest ? c.selectedTest.sys_id : '',
+        payment_method: c.payment.method,
+        total_amount: c.selectedTest ? c.selectedTest.price : 0
+      }
+    }).then(function(r) {
+      c.processing = false;
+      if (r.data.success) {
+        c.data.appointmentNumber = r.data.appointment_number;
+        _goToStep(4);
+      } else {
+        alert('Error: ' + (r.data.error || 'Something went wrong. Please try again.'));
+      }
+    }).catch(function() {
+      c.processing = false;
+      alert('Network error. Please try again.');
+    });
+  };
+
+  c.prevStep = function() {
+    if (c.step > 1) _goToStep(c.step - 1);
+  };
+
+  c.changeTest         = function() { _nav(PAGE_IDS.home); };
+  c.viewMyAppointments = function() { _nav(PAGE_IDS.myAppointments); };
+  c.bookAnother        = function() { _nav(PAGE_IDS.home); };
+}]]></client_script>
+        <controller_as>c</controller_as>
+        <css>.appt-booking {
+  --blue:#0a2463; --blue2:#1e3a8a; --cyan:#00b4d8; --cyan2:#0096c7;
+  --green:#10b981; --amber:#f59e0b; --red:#ef4444;
+  --g50:#f8fafc; --g100:#f1f5f9; --g200:#e2e8f0;
+  --g400:#94a3b8; --g600:#475569; --g800:#1e293b; --wht:#ffffff;
+  --r:14px; --sh:0 1px 4px rgba(0,0,0,.07);
+  font-family:'Segoe UI',system-ui,sans-serif;
+  max-width:800px; margin:0 auto;
+  padding:28px 20px 60px; background:var(--g50); min-height:100vh;
+}
+
+/* ── PROGRESS ──────────────────────────────────────── */
+.progress-wrap { display:flex; align-items:center; justify-content:center; margin-bottom:32px; gap:0; }
+.progress-step { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.step-circle {
+  width:42px; height:42px; border-radius:50%; border:3px solid var(--g200);
+  background:var(--g200); color:var(--g400);
+  display:flex; align-items:center; justify-content:center;
+  font-size:15px; font-weight:700; transition:all .3s;
+}
+.progress-step.active .step-circle { background:var(--blue); border-color:var(--blue); color:#fff; box-shadow:0 4px 12px rgba(10,36,99,.25); }
+.progress-step.done   .step-circle { background:var(--green); border-color:var(--green); color:#fff; }
+.step-label { font-size:11px; font-weight:600; color:var(--g400); white-space:nowrap; }
+.progress-step.active .step-label,
+.progress-step.done   .step-label { color:var(--blue); }
+.step-line { flex:1; min-width:40px; max-width:90px; height:3px; background:var(--g200); margin-top:-22px; transition:background .3s; }
+.step-line.filled { background:var(--green); }
+
+/* ── TEST BANNER ───────────────────────────────────── */
+.test-banner {
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  background:linear-gradient(135deg,#eff6ff,#dbeafe);
+  border:1px solid #bfdbfe; border-radius:var(--r);
+  padding:14px 18px; margin-bottom:24px;
+}
+.test-banner-icon { font-size:34px; flex-shrink:0; }
+.test-banner-info { flex:1; }
+.test-banner-name { display:block; font-size:16px; font-weight:700; color:var(--blue); }
+.test-banner-meta { display:block; font-size:12px; color:var(--g600); margin-top:2px; }
+.test-banner-price { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+.price-tag { font-size:26px; font-weight:800; color:var(--blue); }
+.btn-change-test {
+  background:none; border:1px solid var(--cyan); color:var(--cyan2);
+  padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; cursor:pointer;
+}
+.btn-change-test:hover { background:var(--cyan); color:#fff; }
+.no-test-warn {
+  background:#fef3c7; border:1px solid #fcd34d; border-radius:10px;
+  padding:12px 16px; color:#92400e; font-size:14px; margin-bottom:20px;
+}
+.no-test-warn a { color:var(--cyan2); cursor:pointer; text-decoration:underline; }
+
+/* ── STEP HEADER ───────────────────────────────────── */
+.step-header { margin-bottom:20px; }
+.step-header h2 { font-size:21px; font-weight:800; color:var(--g800); margin:0 0 4px; }
+.step-header p  { color:var(--g600); font-size:13px; margin:0; }
+
+/* ── FORM CARD ─────────────────────────────────────── */
+.form-card {
+  background:var(--wht); border-radius:var(--r); border:1px solid var(--g200);
+  padding:24px; box-shadow:var(--sh); margin-bottom:20px;
+}
+.form-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.form-group { display:flex; flex-direction:column; gap:5px; }
+.form-full { grid-column:1 / -1; }
+.form-label { font-size:11px; font-weight:700; color:var(--g800); text-transform:uppercase; letter-spacing:.4px; }
+.form-label.req::after { content:' *'; color:var(--red); }
+
+/* ── INPUTS ────────────────────────────────────────── */
+.form-input {
+  padding:11px 14px; border:2px solid var(--g200); border-radius:10px;
+  font-size:14px; color:var(--g800); background:var(--wht);
+  outline:none; transition:border .2s; width:100%; box-sizing:border-box;
+  font-family:inherit;
+}
+.form-input:focus { border-color:var(--cyan); }
+.has-error .form-input { border-color:var(--red); }
+textarea.form-input { resize:vertical; min-height:72px; }
+.err-msg { font-size:12px; color:var(--red); font-weight:500; }
+
+/* ── CUSTOM SELECT (fixes broken &lt;select&gt; in Service Portal) ── */
+.cust-select { position:relative; }
+.cust-sel-trigger {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:11px 14px; border:2px solid var(--g200); border-radius:10px;
+  background:var(--wht); cursor:pointer; transition:border .2s;
+  font-size:14px; color:var(--g800); user-select:none;
+}
+.cust-sel-trigger:hover,
+.cust-select.open .cust-sel-trigger { border-color:var(--cyan); }
+.cust-sel-val { flex:1; }
+.cust-sel-menu {
+  position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:999;
+  background:var(--wht); border:2px solid var(--cyan); border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.12); overflow:hidden;
+}
+.cust-sel-item {
+  padding:11px 16px; font-size:14px; color:var(--g800);
+  cursor:pointer; transition:background .12s; border-bottom:1px solid var(--g100);
+}
+.cust-sel-item:last-child { border-bottom:none; }
+.cust-sel-item:hover  { background:#f0f9ff; }
+.cust-sel-item.selected { background:#dbeafe; color:var(--blue); font-weight:600; }
+.has-error .cust-sel-trigger { border-color:var(--red); }
+
+/* ── TIME SLOTS ────────────────────────────────────── */
+.slots-section { margin-top:16px; }
+.slots-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(88px,1fr)); gap:7px; margin-top:8px; }
+.slot-btn {
+  padding:8px 4px; border:2px solid var(--g200); border-radius:8px;
+  background:var(--wht); color:var(--g800); font-size:12px; font-weight:600;
+  cursor:pointer; transition:all .15s; text-align:center;
+}
+.slot-btn:hover   { border-color:var(--cyan); color:var(--cyan2); background:#f0f9ff; }
+.slot-btn.selected { background:var(--blue); border-color:var(--blue); color:#fff; }
+
+/* ── BOOKING SUMMARY ───────────────────────────────── */
+.booking-summary {
+  background:#f0fdf4; border:1px solid #bbf7d0; border-radius:var(--r);
+  padding:16px 20px; margin-bottom:20px;
+}
+.booking-summary h4 { font-size:13px; font-weight:700; color:#166534; margin:0 0 10px; }
+.sum-row { display:flex; justify-content:space-between; font-size:13px; padding:5px 0; border-bottom:1px solid #dcfce7; }
+.sum-row:last-child { border-bottom:none; }
+.sum-row span   { color:var(--g600); }
+.sum-row strong { color:var(--g800); }
+
+/* ── ORDER CARD ────────────────────────────────────── */
+.order-card { background:var(--wht); border-radius:var(--r); border:1px solid var(--g200); overflow:hidden; margin-bottom:20px; }
+.order-hdr  { background:var(--blue); color:#fff; padding:13px 18px; font-weight:700; font-size:14px; }
+.order-row  { display:flex; justify-content:space-between; padding:11px 18px; border-bottom:1px solid var(--g100); font-size:13px; color:var(--g800); }
+.order-divider { border-top:2px solid var(--g200); }
+.order-total { display:flex; justify-content:space-between; padding:14px 18px; font-size:15px; font-weight:700; color:var(--g800); }
+.order-total-price { font-size:22px; color:var(--blue); }
+
+/* ── PAYMENT METHODS ───────────────────────────────── */
+.pay-methods { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:20px; }
+.pay-method {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:14px 8px; border:2px solid var(--g200); border-radius:12px;
+  background:var(--wht); cursor:pointer; transition:all .2s;
+  position:relative; text-align:center;
+}
+.pay-method:hover    { border-color:var(--cyan); }
+.pay-method.active   { border-color:var(--blue); background:#eff6ff; box-shadow:0 4px 12px rgba(10,36,99,.1); }
+.pay-icon  { font-size:24px; }
+.pay-lbl   { font-size:11px; font-weight:700; color:var(--g800); line-height:1.2; }
+.pay-tick  {
+  position:absolute; top:5px; right:7px; width:17px; height:17px;
+  background:var(--green); color:#fff; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700;
+}
+
+/* ── SECURE TAG ────────────────────────────────────── */
+.secure-tag {
+  display:flex; align-items:center; gap:8px;
+  background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px;
+  padding:9px 14px; color:#065f46; font-size:13px; font-weight:600; margin-bottom:18px;
+}
+
+/* ── UPI APPS ──────────────────────────────────────── */
+.upi-apps { display:flex; gap:10px; flex-wrap:wrap; }
+.upi-app-tile {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:12px 14px; border:2px solid var(--g200); border-radius:12px;
+  background:var(--wht); cursor:pointer; transition:all .2s;
+  min-width:64px; font-size:11px; font-weight:700; color:var(--g800);
+}
+.upi-app-tile:hover  { border-color:var(--cyan); }
+.upi-app-tile.upi-active { border-color:var(--blue); background:#eff6ff; color:var(--blue); }
+.upi-app-logo {
+  width:36px; height:36px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:16px; font-weight:900; color:#fff;
+}
+
+/* ── CASH ──────────────────────────────────────────── */
+.cash-card { text-align:center; padding:28px !important; }
+.cash-emoji { font-size:44px; margin-bottom:10px; }
+.cash-card h4 { font-size:17px; color:var(--g800); margin:0 0 8px; }
+.cash-card p  { color:var(--g600); font-size:14px; margin:0 0 6px; }
+.cash-note    { color:var(--g400); font-size:12px; font-style:italic; }
+
+/* ── STEP ACTIONS ──────────────────────────────────── */
+.step-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:4px; }
+.btn-back, .btn-next, .btn-pay {
+  display:inline-flex; align-items:center; gap:7px;
+  padding:12px 24px; border-radius:10px; font-size:14px; font-weight:700;
+  cursor:pointer; border:none; transition:all .2s;
+}
+.btn-back { background:var(--wht); color:var(--g600); border:2px solid var(--g200); }
+.btn-back:hover { border-color:var(--g400); }
+.btn-next { background:linear-gradient(135deg,var(--blue),var(--blue2)); color:#fff; box-shadow:0 4px 12px rgba(10,36,99,.28); }
+.btn-next:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(10,36,99,.34); }
+.btn-pay  { background:linear-gradient(135deg,var(--green),#059669); color:#fff; box-shadow:0 4px 12px rgba(16,185,129,.3); padding:13px 28px; font-size:15px; }
+.btn-pay:hover    { transform:translateY(-1px); }
+.btn-pay:disabled { opacity:.65; cursor:not-allowed; transform:none; }
+
+/* ── SUCCESS ───────────────────────────────────────── */
+.success-wrap   { text-align:center; padding-top:16px; }
+.success-circle {
+  width:88px; height:88px; background:var(--green); border-radius:50%;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:38px; color:#fff; margin-bottom:20px;
+  box-shadow:0 8px 28px rgba(16,185,129,.38);
+  animation:pop .5s cubic-bezier(.36,.07,.19,.97);
+}
+@keyframes pop { 0%{transform:scale(0)} 80%{transform:scale(1.1)} 100%{transform:scale(1)} }
+.success-title { font-size:26px; font-weight:800; color:var(--g800); margin:0 0 10px; }
+.success-sub   { color:var(--g600); font-size:14px; margin:0 0 24px; }
+.conf-card {
+  background:var(--wht); border-radius:var(--r); border:1px solid var(--g200);
+  padding:20px; text-align:left; max-width:480px; margin:0 auto 24px;
+}
+.conf-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--g100); font-size:13px; }
+.conf-row:last-child { border-bottom:none; }
+.conf-row span  { color:var(--g600); }
+.conf-row strong { color:var(--g800); }
+.appt-code  { color:var(--blue); font-family:'Courier New',monospace; }
+.paid-green { color:var(--green); }
+.status-warn { color:var(--amber); }
+.next-steps-wrap { max-width:480px; margin:0 auto 24px; text-align:left; }
+.next-steps-wrap h4 { font-size:14px; font-weight:700; color:var(--g800); margin:0 0 12px; }
+.next-step-row { display:flex; align-items:flex-start; gap:10px; background:var(--g50); border-radius:10px; padding:10px 12px; border:1px solid var(--g100); margin-bottom:8px; }
+.ns-ico { font-size:20px; flex-shrink:0; }
+.next-step-row strong { font-size:13px; color:var(--g800); display:block; margin-bottom:2px; }
+.next-step-row span   { font-size:12px; color:var(--g600); }
+.success-btns { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+
+/* ── RESPONSIVE ────────────────────────────────────── */
+@media (max-width:600px) {
+  .form-grid   { grid-template-columns:1fr; }
+  .pay-methods { grid-template-columns:repeat(3,1fr); }
+  .step-line   { min-width:16px; }
+  .appt-booking { padding:16px 12px 40px; }
+}
+
+/* VALIDATION TOAST */
+.val-toast {
+  background: #fef2f2;
+  border: 2px solid #fca5a5;
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: shake 0.4s ease;
+}
+@keyframes shake {
+  0%,100%{transform:translateX(0)}
+  20%,60%{transform:translateX(-5px)}
+  40%,80%{transform:translateX(5px)}
+}</css>
+        <data_table>sp_instance</data_table>
+        <demo_data/>
+        <description>Widget to display and manage functionalities</description>
+        <docs/>
+        <field_list/>
+        <has_preview>false</has_preview>
+        <id>appointment_booking</id>
+        <internal>false</internal>
+        <link><![CDATA[function link(scope, element, attrs, controller) {
+  
+}]]></link>
+        <name>Appointment Booking</name>
+        <option_schema/>
+        <public>true</public>
+        <roles/>
+        <script><![CDATA[(function() {
+
+  data.test        = null;
+  data.currentUser = null;
+  data.success     = false;
+  data.error       = '';
+  data.appointmentNumber = '';
+
+  // ── Safe user detection (no isAnonymous — not allowed in scope) ──
+  try {
+    var userID   = gs.getUserID()   || '';
+    var userName = gs.getUserName() || '';
+
+    if (userID && userName !== 'guest' && userName !== '') {
+      var userGr = new GlideRecord('sys_user');
+      if (userGr.get(userID)) {
+        data.currentUser = {
+          first_name: userGr.getValue('first_name')    || '',
+          last_name:  userGr.getValue('last_name')     || '',
+          email:      userGr.getValue('email')         || '',
+          phone:      userGr.getValue('mobile_phone')  || userGr.getValue('phone') || ''
+        };
+      }
+    }
+  } catch(e) {
+    gs.error('Booking init error: ' + e.message);
+  }
+
+  // ── Handle appointment creation ──────────────────────────
+  if (input && input.action === 'create_appointment') {
+    try {
+      var formData      = input.data.form        || {};
+      var testSysId     = input.data.test_sys_id || '';
+      var totalAmount   = parseFloat(input.data.total_amount) || 0;
+      var paymentMethod = input.data.payment_method || 'card';
+
+      // Fetch test name & code for email
+      var testName = '', testCode = '';
+      if (testSysId) {
+        var testGr = new GlideRecord('x_2056539_medica_0_diagnostic_test');
+        if (testGr.get(testSysId)) {
+          testName = testGr.getValue('test_name') || '';
+          testCode = testGr.getValue('test_code') || '';
+        }
+      }
+
+      // ── Find or create PATIENT record (not sys_user!) ────
+      var patientSysId = '';
+      var patGr = new GlideRecord('x_2056539_medica_0_patient');
+      patGr.addQuery('email', formData.email || '');
+      patGr.setLimit(1);
+      patGr.query();
+
+      if (patGr.next()) {
+        // Update existing patient
+        patientSysId = patGr.getUniqueValue();
+        patGr.setValue('first_name',   formData.first_name   || '');
+        patGr.setValue('last_name',    formData.last_name    || '');
+        patGr.setValue('phone_number', formData.phone_number || '');
+        patGr.setValue('address',      formData.address      || '');
+        patGr.update();
+      } else {
+        // Create new patient record
+        var newPat = new GlideRecord('x_2056539_medica_0_patient');
+        newPat.initialize();
+        newPat.setValue('first_name',    formData.first_name    || '');
+        newPat.setValue('last_name',     formData.last_name     || '');
+        newPat.setValue('email',         formData.email         || '');
+        newPat.setValue('phone_number',  formData.phone_number  || '');
+        newPat.setValue('date_of_birth', formData.date_of_birth || '');
+        newPat.setValue('gender',        formData.gender        || '');
+        newPat.setValue('address',       formData.address       || '');
+
+        // Link to sys_user if logged in
+        var uid = gs.getUserID();
+        if (uid && gs.getUserName() !== 'guest') {
+          newPat.setValue('user', uid);
+        }
+        patientSysId = newPat.insert();
+      }
+
+      if (!patientSysId) {
+        data.error = 'Failed to create patient record. Check table ACLs.';
+        return;
+      }
+
+      // ── Create appointment ────────────────────────────────
+      var apptNum = 'APPT-' + new Date().getFullYear() + '-' +
+                    (Math.floor(Math.random() * 90000) + 10000);
+
+      var apptGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+      apptGr.initialize();
+      apptGr.setValue('appointment_number', apptNum);
+      apptGr.setValue('patient',            patientSysId);  // links to patient table
+      apptGr.setValue('test',               testSysId);     // links to diagnostic test
+      apptGr.setValue('status',             'pending');
+      apptGr.setValue('approval_status',    'requested');
+      apptGr.setValue('payment_status',     'paid');
+      apptGr.setValue('total_amount',       totalAmount);
+      apptGr.setValue('scheduled_date',     formData.scheduled_date || '');
+      apptGr.setValue('slot_time',          formData.slot_time      || '');
+      apptGr.setValue('notes',              formData.notes          || '');
+      apptGr.setValue('confirmation_sent',  false);
+      apptGr.setValue('email',              formData.email || '');  // ← NEW: Save email to appointment table
+
+      var uid2 = gs.getUserID();
+      if (uid2 && gs.getUserName() !== 'guest') {
+        apptGr.setValue('created_by', uid2);
+      }
+
+      var apptSysId = apptGr.insert();
+      if (!apptSysId) {
+        data.error = 'Failed to create appointment. Check table permissions.';
+        return;
+      }
+
+      // ── Patient confirmation email ────────────────────────
+      try {
+        var patEmail = new GlideEmailOutbound();
+        patEmail.setTo(formData.email);
+        patEmail.setSubject('Appointment Confirmed: ' + apptNum + ' — MediCare Diagnostic Center');
+        patEmail.setBody(
+          '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">' +
+          '<div style="background:#0a2463;padding:24px;text-align:center;border-radius:12px 12px 0 0;">' +
+          '<h2 style="color:#fff;margin:0;">]]>🏥<![CDATA[ MediCare Diagnostic Center</h2></div>' +
+          '<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:0 0 12px 12px;padding:24px;">' +
+          '<h3 style="color:#065f46;">✅ Booking Confirmed!</h3>' +
+          '<p>Dear ' + (formData.first_name||'') + ' ' + (formData.last_name||'') + ',</p>' +
+          '<table style="width:100%;font-size:14px;border-collapse:collapse;background:#fff;border-radius:8px;">' +
+          '<tr><td style="padding:10px;background:#f8fafc;font-weight:600;">Appointment #</td><td style="padding:10px;">' + apptNum + '</td></tr>' +
+          '<tr><td style="padding:10px;background:#f8fafc;font-weight:600;">Test</td><td style="padding:10px;">' + testName + ' (' + testCode + ')</td></tr>' +
+          '<tr><td style="padding:10px;background:#f8fafc;font-weight:600;">Date</td><td style="padding:10px;">' + (formData.scheduled_date||'') + '</td></tr>' +
+          '<tr><td style="padding:10px;background:#f8fafc;font-weight:600;">Time</td><td style="padding:10px;">' + (formData.slot_time||'') + '</td></tr>' +
+          '<tr><td style="padding:10px;background:#f8fafc;font-weight:600;">Amount Paid</td><td style="padding:10px;color:#10b981;font-weight:700;">$' + totalAmount.toFixed(2) + '</td></tr>' +
+          '<tr><td style="padding:10px;background:#f8fafc;font-weight:600;">Payment</td><td style="padding:10px;">' + paymentMethod + '</td></tr>' +
+          '</table>' +
+          '<p style="margin-top:16px;color:#6b7280;font-size:13px;">Pending admin approval. You will receive a confirmation within 24 hours.</p>' +
+          '</div></div>'
+        );
+        patEmail.save();
+      } catch(emailErr) { gs.warn('Patient email error: ' + emailErr.message); }
+
+      // ── Admin approval email ──────────────────────────────
+      try {
+        var adminEmail = gs.getProperty('medicare.admin.email', '');
+        if (adminEmail) {
+          var adminMail = new GlideEmailOutbound();
+          adminMail.setTo(adminEmail);
+          adminMail.setSubject('[Action Required] New Appointment: ' + apptNum);
+          adminMail.setBody(
+            '<div style="font-family:Arial,sans-serif;max-width:600px;">' +
+            '<div style="background:#0a2463;padding:20px;border-radius:8px 8px 0 0;"><h2 style="color:#fff;margin:0;">New Appointment — Approval Required</h2></div>' +
+            '<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:0 0 8px 8px;padding:24px;">' +
+            '<table style="width:100%;font-size:14px;border-collapse:collapse;">' +
+            '<tr><td style="padding:8px;font-weight:600;width:40%;">Appointment #</td><td style="padding:8px;">' + apptNum + '</td></tr>' +
+            '<tr><td style="padding:8px;font-weight:600;">Patient</td><td style="padding:8px;">' + (formData.first_name||'') + ' ' + (formData.last_name||'') + '</td></tr>' +
+            '<tr><td style="padding:8px;font-weight:600;">Email</td><td style="padding:8px;">' + (formData.email||'') + '</td></tr>' +
+            '<tr><td style="padding:8px;font-weight:600;">Phone</td><td style="padding:8px;">' + (formData.phone_number||'') + '</td></tr>' +
+            '<tr><td style="padding:8px;font-weight:600;">Test</td><td style="padding:8px;">' + testName + '</td></tr>' +
+            '<tr><td style="padding:8px;font-weight:600;">Date &amp; Time</td><td style="padding:8px;">' + (formData.scheduled_date||'') + ' ' + (formData.slot_time||'') + '</td></tr>' +
+            '<tr><td style="padding:8px;font-weight:600;">Amount</td><td style="padding:8px;color:#059669;font-weight:700;">$' + totalAmount.toFixed(2) + '</td></tr>' +
+            '</table>' +
+            '<div style="margin-top:20px;padding:12px;background:#f1f5f9;border-radius:8px;font-size:13px;color:#475569;">To approve or reject: open the appointment record in ServiceNow backend and change the <strong>Approval Status</strong> field.</div>' +
+            '</div></div>'
+          );
+          adminMail.save();
+        }
+      } catch(admErr) { gs.warn('Admin email error: ' + admErr.message); }
+
+      // Mark confirmation sent
+      var cfGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+      if (cfGr.get(apptSysId)) {
+        cfGr.setValue('confirmation_sent', true);
+        cfGr.update();
+      }
+
+      data.success            = true;
+      data.appointment_number = apptNum;
+      data.appointment_sys_id = apptSysId;
+
+    } catch(submitErr) {
+      gs.error('Create Appointment Error: ' + submitErr.message);
+      data.error = submitErr.message;
+    }
+  }
+
+})();]]></script>
+        <servicenow>false</servicenow>
+        <sys_class_name>sp_widget</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 10:04:13</sys_created_on>
+        <sys_id>0c00497a834b0350428191d6feaad3f5</sys_id>
+        <sys_mod_count>2</sys_mod_count>
+        <sys_name>Appointment Booking</sys_name>
+        <sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope>
+        <sys_update_name>sp_widget_0c00497a834b0350428191d6feaad3f5</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 10:24:11</sys_updated_on>
+        <template><![CDATA[<div class="appt-booking">
+  <!-- PROGRESS STEPS -->
+  <div class="progress-wrap">
+    <div class="progress-step" ng-class="{'active': c.step >= 1, 'done': c.step > 1}">
+      <div class="step-circle"><i class="fa fa-check" ng-if="c.step > 1"></i><span ng-if="c.step <= 1">1</span></div>
+      <span class="step-label">Details</span>
+    </div>
+    <div class="step-line" ng-class="{'filled': c.step > 1}"></div>
+    <div class="progress-step" ng-class="{'active': c.step >= 2, 'done': c.step > 2}">
+      <div class="step-circle"><i class="fa fa-check" ng-if="c.step > 2"></i><span ng-if="c.step <= 2">2</span></div>
+      <span class="step-label">Schedule</span>
+    </div>
+    <div class="step-line" ng-class="{'filled': c.step > 2}"></div>
+    <div class="progress-step" ng-class="{'active': c.step >= 3, 'done': c.step > 3}">
+      <div class="step-circle"><i class="fa fa-check" ng-if="c.step > 3"></i><span ng-if="c.step <= 3">3</span></div>
+      <span class="step-label">Payment</span>
+    </div>
+    <div class="step-line" ng-class="{'filled': c.step > 3}"></div>
+    <div class="progress-step" ng-class="{'active': c.step >= 4}">
+      <div class="step-circle"><span>4</span></div>
+      <span class="step-label">Done</span>
+    </div>
+  </div>
+
+  <!-- TEST BANNER — ng-bind used instead of {{}} for price -->
+  <div class="test-banner" ng-if="c.selectedTest">
+    <div class="test-banner-icon" ng-bind="c.getCategoryIcon(c.selectedTest.category)"></div>
+    <div class="test-banner-info">
+      <span class="test-banner-name" ng-bind="c.selectedTest.test_name"></span>
+      <span class="test-banner-meta">
+        <span ng-bind="c.selectedTest.category"></span> &middot;
+        Code: <span ng-bind="c.selectedTest.test_code"></span> &middot;
+        Duration: <span ng-bind="c.selectedTest.test_duration"></span>
+      </span>
+    </div>
+    <div class="test-banner-price">
+      <span class="price-tag">$<span ng-bind="c.testPrice"></span></span>
+      <button class="btn-change-test" ng-click="c.changeTest()">Change Test</button>
+    </div>
+  </div>
+
+  <div class="no-test-warn" ng-if="!c.selectedTest">
+    <i class="fa fa-exclamation-triangle"></i>
+    No test selected. <a ng-click="c.changeTest()">Back to catalog</a>
+  </div>
+
+  <!-- ===== STEP 1: PATIENT DETAILS ===== -->
+  <div class="booking-step" ng-show="c.step === 1">
+    <div class="step-header">
+      <h2>&#128100; Patient Information</h2>
+      <p>Fill in your personal details to proceed.</p>
+    </div>
+
+    <div class="form-card">
+      <div class="form-grid">
+
+        <div class="form-group" ng-class="{'has-error': c.errors.first_name}">
+          <label class="form-label req">First Name</label>
+          <input class="form-input" type="text" placeholder="First name"
+            ng-model="c.form.first_name" ng-change="c.clearError('first_name')" />
+          <span class="err-msg" ng-if="c.errors.first_name" ng-bind="c.errors.first_name"></span>
+        </div>
+
+        <div class="form-group" ng-class="{'has-error': c.errors.last_name}">
+          <label class="form-label req">Last Name</label>
+          <input class="form-input" type="text" placeholder="Last name"
+            ng-model="c.form.last_name" ng-change="c.clearError('last_name')" />
+          <span class="err-msg" ng-if="c.errors.last_name" ng-bind="c.errors.last_name"></span>
+        </div>
+
+        <div class="form-group" ng-class="{'has-error': c.errors.email}">
+          <label class="form-label req">Email Address</label>
+          <input class="form-input" type="email" placeholder="you@example.com"
+            ng-model="c.form.email" ng-change="c.clearError('email')" />
+          <span class="err-msg" ng-if="c.errors.email" ng-bind="c.errors.email"></span>
+        </div>
+
+        <div class="form-group" ng-class="{'has-error': c.errors.phone_number}">
+          <label class="form-label req">Phone Number</label>
+          <input class="form-input" type="tel" placeholder="+1 555 000 0000"
+            ng-model="c.form.phone_number" ng-change="c.clearError('phone_number')" />
+          <span class="err-msg" ng-if="c.errors.phone_number" ng-bind="c.errors.phone_number"></span>
+        </div>
+
+        <div class="form-group" ng-class="{'has-error': c.errors.date_of_birth}">
+          <label class="form-label req">Date of Birth</label>
+          <input class="form-input" type="date"
+            ng-model="c.form.date_of_birth" ng-change="c.clearError('date_of_birth')" />
+          <span class="err-msg" ng-if="c.errors.date_of_birth" ng-bind="c.errors.date_of_birth"></span>
+        </div>
+
+        <!-- GENDER custom dropdown -->
+        <div class="form-group" ng-class="{'has-error': c.errors.gender}">
+          <label class="form-label req">Gender</label>
+          <div class="cust-select" ng-class="{'open': c.genderOpen}">
+            <div class="cust-sel-trigger" ng-click="c.genderOpen = !c.genderOpen; c.bankOpen = false;">
+              <span class="cust-sel-val" ng-if="!c.form.gender" style="color:#94a3b8;">-- Select Gender --</span>
+              <span class="cust-sel-val" ng-if="c.form.gender" ng-bind="c.getGenderLabel(c.form.gender)"></span>
+              <i class="fa" ng-class="c.genderOpen ? 'fa-chevron-up' : 'fa-chevron-down'" style="color:#94a3b8;font-size:12px;"></i>
+            </div>
+            <div class="cust-sel-menu" ng-if="c.genderOpen">
+              <div class="cust-sel-item" ng-repeat="opt in c.genderOptions"
+                ng-click="c.selectGender(opt.value)"
+                ng-class="{'selected': c.form.gender === opt.value}"
+                ng-bind="opt.label">
+              </div>
+            </div>
+          </div>
+          <span class="err-msg" ng-if="c.errors.gender" ng-bind="c.errors.gender"></span>
+        </div>
+
+        <div class="form-group form-full">
+          <label class="form-label">Address</label>
+          <textarea class="form-input" rows="2" placeholder="Your full address"
+            ng-model="c.form.address"></textarea>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="step-actions">
+      <button class="btn-back" ng-click="c.changeTest()"><i class="fa fa-arrow-left"></i> Back to Catalog</button>
+      <button class="btn-next" ng-click="c.validateStep1()">Continue <i class="fa fa-arrow-right"></i></button>
+    </div>
+  </div>
+  <!-- Validation message -->
+<div ng-if="c.validationMsg" style="background:#fef2f2;border:2px solid #fca5a5;border-radius:10px;padding:12px 16px;margin-bottom:16px;color:#b91c1c;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;">
+  <i class="fa fa-exclamation-circle"></i>
+  <span>{{c.validationMsg}}</span>
+</div>
+
+  <!-- ===== STEP 2: SCHEDULE ===== -->
+  <div class="booking-step" ng-show="c.step === 2">
+    <div class="step-header">
+      <h2>&#128197; Schedule Appointment</h2>
+      <p>Choose your preferred date and time slot.</p>
+    </div>
+
+    <div class="form-card">
+      <div class="form-group" ng-class="{'has-error': c.errors.scheduled_date}">
+        <label class="form-label req">Preferred Date</label>
+        <input class="form-input" type="date" ng-model="c.form.scheduled_date"
+          ng-attr-min="{{c.minDate}}" ng-change="c.onDateChange()" />
+        <span class="err-msg" ng-if="c.errors.scheduled_date" ng-bind="c.errors.scheduled_date"></span>
+      </div>
+
+      <div class="slots-section" ng-if="c.form.scheduled_date">
+        <label class="form-label req" style="display:block;margin-bottom:10px;">Available Time Slots</label>
+        <div class="slots-grid">
+          <button class="slot-btn" ng-repeat="slot in c.timeSlots"
+            ng-class="{'selected': c.form.slot_time === slot}"
+            ng-click="c.selectSlot(slot)"
+            ng-bind="slot">
+          </button>
+        </div>
+        <span class="err-msg" ng-if="c.errors.slot_time" ng-bind="c.errors.slot_time"></span>
+      </div>
+
+      <div class="form-group" style="margin-top:20px;">
+        <label class="form-label">Notes (optional)</label>
+        <textarea class="form-input" rows="3" placeholder="Any special instructions..."
+          ng-model="c.form.notes"></textarea>
+      </div>
+    </div>
+
+    <!-- Booking Summary — FIX: use ng-bind for all dynamic values -->
+    <div class="booking-summary">
+      <h4>&#128203; Booking Summary</h4>
+      <div class="sum-row">
+        <span>Test</span>
+        <strong ng-bind="c.selectedTest.test_name"></strong>
+      </div>
+      <div class="sum-row">
+        <span>Patient</span>
+        <strong><span ng-bind="c.form.first_name"></span> <span ng-bind="c.form.last_name"></span></strong>
+      </div>
+      <div class="sum-row" ng-if="c.form.scheduled_date">
+        <span>Date</span>
+        <strong ng-bind="c.formatDateDisplay(c.form.scheduled_date)"></strong>
+      </div>
+      <div class="sum-row" ng-if="c.form.slot_time">
+        <span>Time</span>
+        <strong ng-bind="c.form.slot_time"></strong>
+      </div>
+      <div class="sum-row">
+        <span>Amount</span>
+        <strong style="color:#0a2463;">$<span ng-bind="c.testPrice"></span></strong>
+      </div>
+    </div>
+
+    <div class="step-actions">
+      <button class="btn-back" ng-click="c.prevStep()"><i class="fa fa-arrow-left"></i> Back</button>
+      <button class="btn-next" ng-click="c.validateStep2()">Continue to Payment <i class="fa fa-arrow-right"></i></button>
+    </div>
+  </div>
+  <!-- Validation message -->
+<div ng-if="c.validationMsg" style="background:#fef2f2;border:2px solid #fca5a5;border-radius:10px;padding:12px 16px;margin-bottom:16px;color:#b91c1c;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;">
+  <i class="fa fa-exclamation-circle"></i>
+  <span>{{c.validationMsg}}</span>
+</div>
+
+  <!-- ===== STEP 3: PAYMENT ===== -->
+  <div class="booking-step" ng-show="c.step === 3">
+    <div class="step-header">
+      <h2>&#128179; Payment</h2>
+      <p>Select a payment method and confirm your booking.</p>
+    </div>
+
+    <!-- Order Summary — all using ng-bind -->
+    <div class="order-card">
+      <div class="order-hdr">Order Summary</div>
+      <div class="order-row">
+        <span ng-bind="c.selectedTest.test_name"></span>
+        <span>$<span ng-bind="c.testPrice"></span></span>
+      </div>
+      <div class="order-row">
+        <span>Date &amp; Time</span>
+        <span><span ng-bind="c.formatDateDisplay(c.form.scheduled_date)"></span> &middot; <span ng-bind="c.form.slot_time"></span></span>
+      </div>
+      <div class="order-row"><span>Service Fee</span><span>$0.00</span></div>
+      <div class="order-divider"></div>
+      <div class="order-total">
+        <span>Total</span>
+        <span class="order-total-price">$<span ng-bind="c.testPrice"></span></span>
+      </div>
+    </div>
+
+    <!-- Payment methods -->
+    <label class="form-label" style="display:block;margin-bottom:12px;">Select Payment Method</label>
+    <div class="pay-methods">
+      <div class="pay-method" ng-class="{'active': c.payment.method === 'card'}" ng-click="c.setPaymentMethod('card')">
+        <span class="pay-icon">&#128179;</span><span class="pay-lbl">Card</span>
+        <span class="pay-tick" ng-if="c.payment.method === 'card'">&#10003;</span>
+      </div>
+      <div class="pay-method" ng-class="{'active': c.payment.method === 'upi'}" ng-click="c.setPaymentMethod('upi')">
+        <span class="pay-icon">&#128241;</span><span class="pay-lbl">UPI</span>
+        <span class="pay-tick" ng-if="c.payment.method === 'upi'">&#10003;</span>
+      </div>
+      <div class="pay-method" ng-class="{'active': c.payment.method === 'netbanking'}" ng-click="c.setPaymentMethod('netbanking')">
+        <span class="pay-icon">&#127974;</span><span class="pay-lbl">Net Banking</span>
+        <span class="pay-tick" ng-if="c.payment.method === 'netbanking'">&#10003;</span>
+      </div>
+      <div class="pay-method" ng-class="{'active': c.payment.method === 'insurance'}" ng-click="c.setPaymentMethod('insurance')">
+        <span class="pay-icon">&#127973;</span><span class="pay-lbl">Insurance</span>
+        <span class="pay-tick" ng-if="c.payment.method === 'insurance'">&#10003;</span>
+      </div>
+      <div class="pay-method" ng-class="{'active': c.payment.method === 'cash'}" ng-click="c.setPaymentMethod('cash')">
+        <span class="pay-icon">&#128181;</span><span class="pay-lbl">Pay on Arrival</span>
+        <span class="pay-tick" ng-if="c.payment.method === 'cash'">&#10003;</span>
+      </div>
+    </div>
+
+    <!-- Card -->
+    <div class="form-card" ng-if="c.payment.method === 'card'">
+      <div class="secure-tag"><i class="fa fa-lock"></i> Secure Demo Payment</div>
+      <div class="form-grid">
+        <div class="form-group form-full">
+          <label class="form-label">Cardholder Name</label>
+          <input class="form-input" type="text" placeholder="Name on card" ng-model="c.payment.card_name" />
+        </div>
+        <div class="form-group form-full">
+          <label class="form-label">Card Number</label>
+          <input class="form-input" type="text" placeholder="4242 4242 4242 4242" maxlength="19" ng-model="c.payment.card_number" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Expiry</label>
+          <input class="form-input" type="text" placeholder="MM/YY" maxlength="5" ng-model="c.payment.expiry" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">CVV</label>
+          <input class="form-input" type="password" placeholder="***" maxlength="4" ng-model="c.payment.cvv" />
+        </div>
+      </div>
+    </div>
+
+    <!-- UPI -->
+    <div class="form-card" ng-if="c.payment.method === 'upi'">
+      <div class="secure-tag"><i class="fa fa-lock"></i> UPI Demo Payment</div>
+      <div class="form-group" style="margin-bottom:16px;">
+        <label class="form-label">UPI ID</label>
+        <input class="form-input" type="text" placeholder="yourname@upi" ng-model="c.payment.upi_id" />
+      </div>
+      <label class="form-label" style="display:block;margin-bottom:10px;">Or choose app</label>
+      <div class="upi-apps">
+        <div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'gpay'}" ng-click="c.selectUpiApp('gpay')">
+          <div class="upi-app-logo" style="background:linear-gradient(135deg,#4285f4,#34a853);">G</div>
+          <span>GPay</span>
+        </div>
+        <div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'phonepe'}" ng-click="c.selectUpiApp('phonepe')">
+          <div class="upi-app-logo" style="background:#5f259f;">P</div>
+          <span>PhonePe</span>
+        </div>
+        <div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'paytm'}" ng-click="c.selectUpiApp('paytm')">
+          <div class="upi-app-logo" style="background:#00b9f5;color:#002970;">P</div>
+          <span>Paytm</span>
+        </div>
+        <div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'bhim'}" ng-click="c.selectUpiApp('bhim')">
+          <div class="upi-app-logo" style="background:#ff6600;">B</div>
+          <span>BHIM</span>
+        </div>
+        <div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'amazonpay'}" ng-click="c.selectUpiApp('amazonpay')">
+          <div class="upi-app-logo" style="background:#ff9900;color:#232f3e;">A</div>
+          <span>Amazon</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Net Banking -->
+    <div class="form-card" ng-if="c.payment.method === 'netbanking'">
+      <div class="secure-tag"><i class="fa fa-lock"></i> Net Banking Demo</div>
+      <div class="form-group">
+        <label class="form-label">Select Your Bank</label>
+        <div class="cust-select" ng-class="{'open': c.bankOpen}">
+          <div class="cust-sel-trigger" ng-click="c.bankOpen = !c.bankOpen; c.genderOpen = false;">
+            <span class="cust-sel-val" ng-if="!c.payment.bank" style="color:#94a3b8;">-- Select Bank --</span>
+            <span class="cust-sel-val" ng-if="c.payment.bank" ng-bind="c.getBankLabel(c.payment.bank)"></span>
+            <i class="fa" ng-class="c.bankOpen ? 'fa-chevron-up' : 'fa-chevron-down'" style="color:#94a3b8;font-size:12px;"></i>
+          </div>
+          <div class="cust-sel-menu" ng-if="c.bankOpen">
+            <div class="cust-sel-item" ng-repeat="b in c.bankOptions"
+              ng-click="c.selectBank(b.value)"
+              ng-class="{'selected': c.payment.bank === b.value}"
+              ng-bind="b.label">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Insurance -->
+    <div class="form-card" ng-if="c.payment.method === 'insurance'">
+      <div class="secure-tag">&#127973; Insurance Payment</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Provider</label>
+          <input class="form-input" type="text" placeholder="e.g. BlueCross, Aetna" ng-model="c.payment.insurance_provider" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Policy Number</label>
+          <input class="form-input" type="text" placeholder="Policy / Member ID" ng-model="c.payment.policy_number" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Cash -->
+    <div class="form-card cash-card" ng-if="c.payment.method === 'cash'">
+      <div class="cash-emoji">&#128181;</div>
+      <h4>Pay on Arrival</h4>
+      <p>Pay <strong>$<span ng-bind="c.testPrice"></span></strong> at the center when you arrive.</p>
+      <p class="cash-note">Carry a valid ID. Please arrive 15 minutes early.</p>
+    </div>
+
+    <div class="step-actions">
+      <button class="btn-back" ng-click="c.prevStep()"><i class="fa fa-arrow-left"></i> Back</button>
+      <button class="btn-pay" ng-click="c.processPayment()" ng-disabled="c.processing">
+        <span ng-if="!c.processing">
+          <i class="fa fa-lock"></i> Confirm &amp; Pay $<span ng-bind="c.testPrice"></span>
+        </span>
+        <span ng-if="c.processing"><i class="fa fa-spinner fa-spin"></i> Processing...</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ===== STEP 4: SUCCESS ===== -->
+  <div class="booking-step success-wrap" ng-show="c.step === 4">
+    <div class="success-circle"><i class="fa fa-check"></i></div>
+    <h2 class="success-title">Appointment Confirmed! &#127881;</h2>
+    <p class="success-sub">Pending admin approval. Confirmation sent to <strong ng-bind="c.form.email"></strong></p>
+
+    <div class="conf-card">
+      <div class="conf-row"><span>Appointment #</span><strong class="appt-code" ng-bind="c.data.appointmentNumber"></strong></div>
+      <div class="conf-row"><span>Patient</span><strong><span ng-bind="c.form.first_name"></span> <span ng-bind="c.form.last_name"></span></strong></div>
+      <div class="conf-row"><span>Test</span><strong ng-bind="c.selectedTest.test_name"></strong></div>
+      <div class="conf-row"><span>Date &amp; Time</span><strong><span ng-bind="c.formatDateDisplay(c.form.scheduled_date)"></span> &middot; <span ng-bind="c.form.slot_time"></span></strong></div>
+      <div class="conf-row"><span>Amount Paid</span><strong class="paid-green">$<span ng-bind="c.testPrice"></span> &#10003;</strong></div>
+      <div class="conf-row"><span>Payment Via</span><strong ng-bind="c.getPaymentLabel(c.payment.method)"></strong></div>
+      <div class="conf-row"><span>Status</span><strong class="status-warn">&#9203; Pending Approval</strong></div>
+    </div>
+
+    <div class="next-steps-wrap">
+      <h4>What happens next?</h4>
+      <div class="next-step-row"><span class="ns-ico">&#128231;</span><div><strong>Confirmation Email</strong><span>Check your inbox for booking details</span></div></div>
+      <div class="next-step-row"><span class="ns-ico">&#9989;</span><div><strong>Admin Approval</strong><span>Reviewed within 24 hours</span></div></div>
+      <div class="next-step-row"><span class="ns-ico">&#128276;</span><div><strong>Reminder</strong><span>You will get an alert 24h before your test</span></div></div>
+    </div>
+
+    <div class="success-btns">
+      <button class="btn-next" ng-click="c.viewMyAppointments()"><i class="fa fa-list"></i> View My Bookings</button>
+      <button class="btn-back" ng-click="c.bookAnother()">Book Another Test</button>
+    </div>
+  </div>
+
+</div>]]></template>
+    </sp_widget>
+    <sys_update_version action="INSERT_OR_UPDATE">
+        <action>DELETE</action>
+        <application display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</application>
+        <file_path/>
+        <instance_id>778296dfdbe2bd14b1eb9027c5961957</instance_id>
+        <instance_name>dev220550</instance_name>
+        <name>sp_widget_0c00497a834b0350428191d6feaad3f5</name>
+        <payload>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;record_update table="sp_widget"&gt;&lt;sp_widget action="INSERT_OR_UPDATE"&gt;&lt;category&gt;custom&lt;/category&gt;&lt;client_script&gt;&lt;![CDATA[api.controller=function($timeout) {
+  var c = this;
+
+  // ── PAGE IDs (confirmed from your ServiceNow Pages list) ──
+  var PAGE_IDS = {
+    home:           'test_catalog',
+    myAppointments: 'my_appointments',
+    labReports:     'lab_reports'
+  };
+
+  c.step = 1;
+  c.processing = false;
+  c.errors = {};
+  c.genderOpen = false;
+  c.bankOpen = false;
+  c.testPrice = '0.00';
+  c.validationMsg = '';
+
+  c.form = {
+    first_name: '', last_name: '', email: '', phone_number: '',
+    date_of_birth: '', gender: '', address: '',
+    scheduled_date: '', slot_time: '', notes: ''
+  };
+
+  c.payment = {
+    method: 'card',
+    card_name: '', card_number: '', expiry: '', cvv: '',
+    upi_id: '', upi_app: '',
+    bank: '',
+    insurance_provider: '', policy_number: ''
+  };
+
+  c.genderOptions = [
+    { value: 'male',              label: 'Male' },
+    { value: 'female',            label: 'Female' },
+    { value: 'other',             label: 'Other' },
+    { value: 'prefer_not_to_say', label: 'Prefer not to say' }
+  ];
+
+  c.bankOptions = [
+    { value: 'sbi',   label: 'State Bank of India' },
+    { value: 'hdfc',  label: 'HDFC Bank' },
+    { value: 'icici', label: 'ICICI Bank' },
+    { value: 'axis',  label: 'Axis Bank' },
+    { value: 'kotak', label: 'Kotak Mahindra Bank' },
+    { value: 'pnb',   label: 'Punjab National Bank' },
+    { value: 'bob',   label: 'Bank of Baroda' },
+    { value: 'other', label: 'Other Bank' }
+  ];
+
+  c.timeSlots = [
+    '08:00 AM','08:30 AM','09:00 AM','09:30 AM',
+    '10:00 AM','10:30 AM','11:00 AM','11:30 AM',
+    '12:00 PM','12:30 PM','01:00 PM','01:30 PM',
+    '02:00 PM','02:30 PM','03:00 PM','03:30 PM',
+    '04:00 PM','04:30 PM','05:00 PM'
+  ];
+
+  // FIX: padStart() not always available in ServiceNow's JS engine — use manual pad
+  function pad2(n) { return n &lt; 10 ? '0' + n : '' + n; }
+  var today = new Date();
+  c.minDate = today.getFullYear() + '-' + pad2(today.getMonth() + 1) + '-' + pad2(today.getDate());
+
+  // ── NAVIGATION ────────────────────────────────────────────
+  var _nav = function(pageId) {
+    var portalId = window.location.pathname.split('/')[1] || 'sp';
+    window.location.href = '/' + portalId + '?id=' + pageId;
+  };
+
+  // ── INIT ──────────────────────────────────────────────────
+  c.$onInit = function() {
+    var sysId    = sessionStorage.getItem('selected_test_sys_id')   || '';
+    var name     = sessionStorage.getItem('selected_test_name')     || '';
+    var price    = sessionStorage.getItem('selected_test_price')    || '0';
+    var code     = sessionStorage.getItem('selected_test_code')     || '';
+    var category = sessionStorage.getItem('selected_test_category') || 'General';
+    var duration = sessionStorage.getItem('selected_test_duration') || '';
+
+    if (sysId) {
+      var numPrice = parseFloat(price) || 0;
+      c.selectedTest = {
+        sys_id: sysId, test_name: name, price: numPrice,
+        test_code: code, category: category, test_duration: duration
+      };
+      c.testPrice = numPrice.toFixed(2);
+      ['selected_test_sys_id','selected_test_name','selected_test_price',
+       'selected_test_code','selected_test_category','selected_test_duration']
+        .forEach(function(k) { sessionStorage.removeItem(k); });
+    } else if (c.data &amp;&amp; c.data.test) {
+      c.selectedTest = c.data.test;
+      c.testPrice = (parseFloat(c.data.test.price) || 0).toFixed(2);
+    }
+
+    if (c.data &amp;&amp; c.data.currentUser) {
+      c.form.first_name   = c.data.currentUser.first_name || '';
+      c.form.last_name    = c.data.currentUser.last_name  || '';
+      c.form.email        = c.data.currentUser.email      || '';
+      c.form.phone_number = c.data.currentUser.phone      || '';
+    }
+  };
+
+  // ── DROPDOWN HELPERS ──────────────────────────────────────
+  c.getGenderLabel = function(val) {
+    for (var i = 0; i &lt; c.genderOptions.length; i++) {
+      if (c.genderOptions[i].value === val) return c.genderOptions[i].label;
+    }
+    return '-- Select Gender --';
+  };
+  c.getBankLabel = function(val) {
+    for (var i = 0; i &lt; c.bankOptions.length; i++) {
+      if (c.bankOptions[i].value === val) return c.bankOptions[i].label;
+    }
+    return '-- Select Bank --';
+  };
+  c.selectGender = function(val) { c.form.gender = val; c.genderOpen = false; c.clearError('gender'); };
+  c.selectBank   = function(val) { c.payment.bank = val; c.bankOpen = false; };
+  c.setPaymentMethod = function(method) { c.payment.method = method; c.bankOpen = false; c.genderOpen = false; };
+  c.selectUpiApp = function(app) { c.payment.upi_app = app; };
+
+  // ── MISC HELPERS ──────────────────────────────────────────
+  c.getCategoryIcon = function(cat) {
+    var icons = {
+      'blood':']]&gt;🩸&lt;![CDATA[','urine':']]&gt;🧪&lt;![CDATA[','imaging':']]&gt;🩻&lt;![CDATA[','radiology':']]&gt;🩻&lt;![CDATA[',
+      'cardiology':'❤️','neurology':']]&gt;🧠&lt;![CDATA[','genetics':']]&gt;🧬&lt;![CDATA[','pathology':']]&gt;🔬&lt;![CDATA[',
+      'biochemistry':'⚗️','allergy':']]&gt;🌿&lt;![CDATA[','microbiology':']]&gt;🦠&lt;![CDATA[','covid':']]&gt;😷&lt;![CDATA[',
+      'ecg':'❤️','x-ray':']]&gt;🩻&lt;![CDATA[','xray':']]&gt;🩻&lt;![CDATA[','diabetes':']]&gt;💉&lt;![CDATA[','thyroid':']]&gt;🦋&lt;![CDATA['
+    };
+    if (!cat) return ']]&gt;🔬&lt;![CDATA[';
+    var key = cat.toLowerCase();
+    for (var k in icons) { if (key.indexOf(k) !== -1) return icons[k]; }
+    return ']]&gt;🔬&lt;![CDATA[';
+  };
+
+  c.formatDateDisplay = function(dateStr) {
+    if (!dateStr) return '';
+    // Normalize: handle both string and Date object
+    if (typeof dateStr !== 'string') {
+      try { dateStr = dateStr.toISOString().split('T')[0]; } catch(e) { return ''; }
+    }
+    var parts = dateStr.split('-');
+    if (parts.length !== 3) return dateStr;
+    var yr = parseInt(parts[0], 10);
+    var mo = parseInt(parts[1], 10) - 1;
+    var dy = parseInt(parts[2], 10);
+    var d = new Date(yr, mo, dy);
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var days   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return days[d.getDay()] + ', ' + dy + ' ' + months[mo] + ' ' + yr;
+  };
+
+  c.getPaymentLabel = function(method) {
+    var labels = {
+      'card':'Credit/Debit Card','upi':'UPI Payment',
+      'netbanking':'Net Banking','insurance':'Insurance','cash':'Pay on Arrival'
+    };
+    return labels[method] || method;
+  };
+
+  c.selectSlot = function(slot) { c.form.slot_time = slot; c.clearError('slot_time'); };
+
+  c.onDateChange = function() { c.form.slot_time = ''; c.clearError('scheduled_date'); };
+
+  c.clearError = function(field) {
+    if (c.errors[field]) delete c.errors[field];
+    c.validationMsg = '';
+  };
+
+  // ── STEP NAVIGATION (direct — ng-click already triggers digest) ───
+  var _goToStep = function(n) {
+    c.step = n;
+    window.scrollTo(0, 0);
+  };
+
+  // ── STEP 1 VALIDATION ─────────────────────────────────────
+  c.validateStep1 = function() {
+    c.errors = {};
+    c.validationMsg = '';
+    var f = c.form;
+    var emailReg = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    var phoneReg = /^\+?[\d\s\-(). ]{7,20}$/;
+
+    if (!f.first_name || !f.first_name.trim()) c.errors.first_name   = 'First name is required';
+    if (!f.last_name  || !f.last_name.trim())  c.errors.last_name    = 'Last name is required';
+    if (!f.email      || !f.email.trim())      c.errors.email        = 'Email is required';
+    else if (!emailReg.test(f.email.trim()))   c.errors.email        = 'Enter a valid email';
+    if (!f.phone_number || !f.phone_number.trim()) c.errors.phone_number = 'Phone number is required';
+    else if (!phoneReg.test(f.phone_number.trim())) c.errors.phone_number = 'Enter a valid phone number';
+    if (!f.date_of_birth) c.errors.date_of_birth = 'Date of birth is required';
+    if (!f.gender)        c.errors.gender        = 'Please select a gender';
+
+    if (Object.keys(c.errors).length &gt; 0) {
+      c.validationMsg = 'Please fill in all required fields marked below.';
+      window.scrollTo(0, 0);
+      return;
+    }
+    _goToStep(2);
+  };
+
+  // ── STEP 2 VALIDATION ─────────────────────────────────────
+  // KEY FIX: Robust date handling — works with string, Date object, or missing value
+  c.validateStep2 = function() {
+    c.errors = {};
+    c.validationMsg = '';
+
+    // Normalize the date value safely
+    var rawDate = c.form.scheduled_date;
+    var dateStr = '';
+
+    if (rawDate) {
+      if (typeof rawDate === 'string') {
+        dateStr = rawDate.trim();
+      } else if (rawDate instanceof Date) {
+        // ng-model on type="date" can return a Date object in some AngularJS builds
+        var yr = rawDate.getFullYear();
+        var mo = rawDate.getMonth() + 1;
+        var dy = rawDate.getDate();
+        dateStr = yr + '-' + pad2(mo) + '-' + pad2(dy);
+        c.form.scheduled_date = dateStr; // Normalize to string
+      } else {
+        dateStr = String(rawDate).trim();
+      }
+    }
+
+    if (!dateStr) {
+      c.errors.scheduled_date = 'Please select a date';
+    } else {
+      try {
+        var parts = dateStr.split('-');
+        if (parts.length === 3) {
+          var sel = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+          var now = new Date();
+          now.setHours(0, 0, 0, 0);
+          if (sel &lt; now) c.errors.scheduled_date = 'Please select a future date';
+        }
+      } catch (ex) {
+        c.errors.scheduled_date = 'Invalid date selected';
+      }
+    }
+
+    if (!c.form.slot_time) {
+      c.errors.slot_time = 'Please select a time slot';
+    }
+
+    if (Object.keys(c.errors).length &gt; 0) {
+      c.validationMsg = 'Please select a date and time slot before continuing.';
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    _goToStep(3);
+  };
+
+  // ── PAYMENT ───────────────────────────────────────────────
+  c.processPayment = function() {
+    c.processing = true;
+    $timeout(function() { c.submitBooking(); }, 1200);
+  };
+
+  c.submitBooking = function() {
+    c.server.get({
+      action: 'create_appointment',
+      data: {
+        form: c.form,
+        test_sys_id: c.selectedTest ? c.selectedTest.sys_id : '',
+        payment_method: c.payment.method,
+        total_amount: c.selectedTest ? c.selectedTest.price : 0
+      }
+    }).then(function(r) {
+      c.processing = false;
+      if (r.data.success) {
+        c.data.appointmentNumber = r.data.appointment_number;
+        _goToStep(4);
+      } else {
+        alert('Error: ' + (r.data.error || 'Something went wrong. Please try again.'));
+      }
+    }).catch(function() {
+      c.processing = false;
+      alert('Network error. Please try again.');
+    });
+  };
+
+  c.prevStep = function() {
+    if (c.step &gt; 1) _goToStep(c.step - 1);
+  };
+
+  c.changeTest         = function() { _nav(PAGE_IDS.home); };
+  c.viewMyAppointments = function() { _nav(PAGE_IDS.myAppointments); };
+  c.bookAnother        = function() { _nav(PAGE_IDS.home); };
+}]]&gt;&lt;/client_script&gt;&lt;controller_as&gt;c&lt;/controller_as&gt;&lt;css&gt;.appt-booking {
+  --blue:#0a2463; --blue2:#1e3a8a; --cyan:#00b4d8; --cyan2:#0096c7;
+  --green:#10b981; --amber:#f59e0b; --red:#ef4444;
+  --g50:#f8fafc; --g100:#f1f5f9; --g200:#e2e8f0;
+  --g400:#94a3b8; --g600:#475569; --g800:#1e293b; --wht:#ffffff;
+  --r:14px; --sh:0 1px 4px rgba(0,0,0,.07);
+  font-family:'Segoe UI',system-ui,sans-serif;
+  max-width:800px; margin:0 auto;
+  padding:28px 20px 60px; background:var(--g50); min-height:100vh;
+}
+
+/* ── PROGRESS ──────────────────────────────────────── */
+.progress-wrap { display:flex; align-items:center; justify-content:center; margin-bottom:32px; gap:0; }
+.progress-step { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.step-circle {
+  width:42px; height:42px; border-radius:50%; border:3px solid var(--g200);
+  background:var(--g200); color:var(--g400);
+  display:flex; align-items:center; justify-content:center;
+  font-size:15px; font-weight:700; transition:all .3s;
+}
+.progress-step.active .step-circle { background:var(--blue); border-color:var(--blue); color:#fff; box-shadow:0 4px 12px rgba(10,36,99,.25); }
+.progress-step.done   .step-circle { background:var(--green); border-color:var(--green); color:#fff; }
+.step-label { font-size:11px; font-weight:600; color:var(--g400); white-space:nowrap; }
+.progress-step.active .step-label,
+.progress-step.done   .step-label { color:var(--blue); }
+.step-line { flex:1; min-width:40px; max-width:90px; height:3px; background:var(--g200); margin-top:-22px; transition:background .3s; }
+.step-line.filled { background:var(--green); }
+
+/* ── TEST BANNER ───────────────────────────────────── */
+.test-banner {
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  background:linear-gradient(135deg,#eff6ff,#dbeafe);
+  border:1px solid #bfdbfe; border-radius:var(--r);
+  padding:14px 18px; margin-bottom:24px;
+}
+.test-banner-icon { font-size:34px; flex-shrink:0; }
+.test-banner-info { flex:1; }
+.test-banner-name { display:block; font-size:16px; font-weight:700; color:var(--blue); }
+.test-banner-meta { display:block; font-size:12px; color:var(--g600); margin-top:2px; }
+.test-banner-price { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+.price-tag { font-size:26px; font-weight:800; color:var(--blue); }
+.btn-change-test {
+  background:none; border:1px solid var(--cyan); color:var(--cyan2);
+  padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; cursor:pointer;
+}
+.btn-change-test:hover { background:var(--cyan); color:#fff; }
+.no-test-warn {
+  background:#fef3c7; border:1px solid #fcd34d; border-radius:10px;
+  padding:12px 16px; color:#92400e; font-size:14px; margin-bottom:20px;
+}
+.no-test-warn a { color:var(--cyan2); cursor:pointer; text-decoration:underline; }
+
+/* ── STEP HEADER ───────────────────────────────────── */
+.step-header { margin-bottom:20px; }
+.step-header h2 { font-size:21px; font-weight:800; color:var(--g800); margin:0 0 4px; }
+.step-header p  { color:var(--g600); font-size:13px; margin:0; }
+
+/* ── FORM CARD ─────────────────────────────────────── */
+.form-card {
+  background:var(--wht); border-radius:var(--r); border:1px solid var(--g200);
+  padding:24px; box-shadow:var(--sh); margin-bottom:20px;
+}
+.form-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.form-group { display:flex; flex-direction:column; gap:5px; }
+.form-full { grid-column:1 / -1; }
+.form-label { font-size:11px; font-weight:700; color:var(--g800); text-transform:uppercase; letter-spacing:.4px; }
+.form-label.req::after { content:' *'; color:var(--red); }
+
+/* ── INPUTS ────────────────────────────────────────── */
+.form-input {
+  padding:11px 14px; border:2px solid var(--g200); border-radius:10px;
+  font-size:14px; color:var(--g800); background:var(--wht);
+  outline:none; transition:border .2s; width:100%; box-sizing:border-box;
+  font-family:inherit;
+}
+.form-input:focus { border-color:var(--cyan); }
+.has-error .form-input { border-color:var(--red); }
+textarea.form-input { resize:vertical; min-height:72px; }
+.err-msg { font-size:12px; color:var(--red); font-weight:500; }
+
+/* ── CUSTOM SELECT (fixes broken &amp;lt;select&amp;gt; in Service Portal) ── */
+.cust-select { position:relative; }
+.cust-sel-trigger {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:11px 14px; border:2px solid var(--g200); border-radius:10px;
+  background:var(--wht); cursor:pointer; transition:border .2s;
+  font-size:14px; color:var(--g800); user-select:none;
+}
+.cust-sel-trigger:hover,
+.cust-select.open .cust-sel-trigger { border-color:var(--cyan); }
+.cust-sel-val { flex:1; }
+.cust-sel-menu {
+  position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:999;
+  background:var(--wht); border:2px solid var(--cyan); border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.12); overflow:hidden;
+}
+.cust-sel-item {
+  padding:11px 16px; font-size:14px; color:var(--g800);
+  cursor:pointer; transition:background .12s; border-bottom:1px solid var(--g100);
+}
+.cust-sel-item:last-child { border-bottom:none; }
+.cust-sel-item:hover  { background:#f0f9ff; }
+.cust-sel-item.selected { background:#dbeafe; color:var(--blue); font-weight:600; }
+.has-error .cust-sel-trigger { border-color:var(--red); }
+
+/* ── TIME SLOTS ────────────────────────────────────── */
+.slots-section { margin-top:16px; }
+.slots-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(88px,1fr)); gap:7px; margin-top:8px; }
+.slot-btn {
+  padding:8px 4px; border:2px solid var(--g200); border-radius:8px;
+  background:var(--wht); color:var(--g800); font-size:12px; font-weight:600;
+  cursor:pointer; transition:all .15s; text-align:center;
+}
+.slot-btn:hover   { border-color:var(--cyan); color:var(--cyan2); background:#f0f9ff; }
+.slot-btn.selected { background:var(--blue); border-color:var(--blue); color:#fff; }
+
+/* ── BOOKING SUMMARY ───────────────────────────────── */
+.booking-summary {
+  background:#f0fdf4; border:1px solid #bbf7d0; border-radius:var(--r);
+  padding:16px 20px; margin-bottom:20px;
+}
+.booking-summary h4 { font-size:13px; font-weight:700; color:#166534; margin:0 0 10px; }
+.sum-row { display:flex; justify-content:space-between; font-size:13px; padding:5px 0; border-bottom:1px solid #dcfce7; }
+.sum-row:last-child { border-bottom:none; }
+.sum-row span   { color:var(--g600); }
+.sum-row strong { color:var(--g800); }
+
+/* ── ORDER CARD ────────────────────────────────────── */
+.order-card { background:var(--wht); border-radius:var(--r); border:1px solid var(--g200); overflow:hidden; margin-bottom:20px; }
+.order-hdr  { background:var(--blue); color:#fff; padding:13px 18px; font-weight:700; font-size:14px; }
+.order-row  { display:flex; justify-content:space-between; padding:11px 18px; border-bottom:1px solid var(--g100); font-size:13px; color:var(--g800); }
+.order-divider { border-top:2px solid var(--g200); }
+.order-total { display:flex; justify-content:space-between; padding:14px 18px; font-size:15px; font-weight:700; color:var(--g800); }
+.order-total-price { font-size:22px; color:var(--blue); }
+
+/* ── PAYMENT METHODS ───────────────────────────────── */
+.pay-methods { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:20px; }
+.pay-method {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:14px 8px; border:2px solid var(--g200); border-radius:12px;
+  background:var(--wht); cursor:pointer; transition:all .2s;
+  position:relative; text-align:center;
+}
+.pay-method:hover    { border-color:var(--cyan); }
+.pay-method.active   { border-color:var(--blue); background:#eff6ff; box-shadow:0 4px 12px rgba(10,36,99,.1); }
+.pay-icon  { font-size:24px; }
+.pay-lbl   { font-size:11px; font-weight:700; color:var(--g800); line-height:1.2; }
+.pay-tick  {
+  position:absolute; top:5px; right:7px; width:17px; height:17px;
+  background:var(--green); color:#fff; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700;
+}
+
+/* ── SECURE TAG ────────────────────────────────────── */
+.secure-tag {
+  display:flex; align-items:center; gap:8px;
+  background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px;
+  padding:9px 14px; color:#065f46; font-size:13px; font-weight:600; margin-bottom:18px;
+}
+
+/* ── UPI APPS ──────────────────────────────────────── */
+.upi-apps { display:flex; gap:10px; flex-wrap:wrap; }
+.upi-app-tile {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:12px 14px; border:2px solid var(--g200); border-radius:12px;
+  background:var(--wht); cursor:pointer; transition:all .2s;
+  min-width:64px; font-size:11px; font-weight:700; color:var(--g800);
+}
+.upi-app-tile:hover  { border-color:var(--cyan); }
+.upi-app-tile.upi-active { border-color:var(--blue); background:#eff6ff; color:var(--blue); }
+.upi-app-logo {
+  width:36px; height:36px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:16px; font-weight:900; color:#fff;
+}
+
+/* ── CASH ──────────────────────────────────────────── */
+.cash-card { text-align:center; padding:28px !important; }
+.cash-emoji { font-size:44px; margin-bottom:10px; }
+.cash-card h4 { font-size:17px; color:var(--g800); margin:0 0 8px; }
+.cash-card p  { color:var(--g600); font-size:14px; margin:0 0 6px; }
+.cash-note    { color:var(--g400); font-size:12px; font-style:italic; }
+
+/* ── STEP ACTIONS ──────────────────────────────────── */
+.step-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:4px; }
+.btn-back, .btn-next, .btn-pay {
+  display:inline-flex; align-items:center; gap:7px;
+  padding:12px 24px; border-radius:10px; font-size:14px; font-weight:700;
+  cursor:pointer; border:none; transition:all .2s;
+}
+.btn-back { background:var(--wht); color:var(--g600); border:2px solid var(--g200); }
+.btn-back:hover { border-color:var(--g400); }
+.btn-next { background:linear-gradient(135deg,var(--blue),var(--blue2)); color:#fff; box-shadow:0 4px 12px rgba(10,36,99,.28); }
+.btn-next:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(10,36,99,.34); }
+.btn-pay  { background:linear-gradient(135deg,var(--green),#059669); color:#fff; box-shadow:0 4px 12px rgba(16,185,129,.3); padding:13px 28px; font-size:15px; }
+.btn-pay:hover    { transform:translateY(-1px); }
+.btn-pay:disabled { opacity:.65; cursor:not-allowed; transform:none; }
+
+/* ── SUCCESS ───────────────────────────────────────── */
+.success-wrap   { text-align:center; padding-top:16px; }
+.success-circle {
+  width:88px; height:88px; background:var(--green); border-radius:50%;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:38px; color:#fff; margin-bottom:20px;
+  box-shadow:0 8px 28px rgba(16,185,129,.38);
+  animation:pop .5s cubic-bezier(.36,.07,.19,.97);
+}
+@keyframes pop { 0%{transform:scale(0)} 80%{transform:scale(1.1)} 100%{transform:scale(1)} }
+.success-title { font-size:26px; font-weight:800; color:var(--g800); margin:0 0 10px; }
+.success-sub   { color:var(--g600); font-size:14px; margin:0 0 24px; }
+.conf-card {
+  background:var(--wht); border-radius:var(--r); border:1px solid var(--g200);
+  padding:20px; text-align:left; max-width:480px; margin:0 auto 24px;
+}
+.conf-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--g100); font-size:13px; }
+.conf-row:last-child { border-bottom:none; }
+.conf-row span  { color:var(--g600); }
+.conf-row strong { color:var(--g800); }
+.appt-code  { color:var(--blue); font-family:'Courier New',monospace; }
+.paid-green { color:var(--green); }
+.status-warn { color:var(--amber); }
+.next-steps-wrap { max-width:480px; margin:0 auto 24px; text-align:left; }
+.next-steps-wrap h4 { font-size:14px; font-weight:700; color:var(--g800); margin:0 0 12px; }
+.next-step-row { display:flex; align-items:flex-start; gap:10px; background:var(--g50); border-radius:10px; padding:10px 12px; border:1px solid var(--g100); margin-bottom:8px; }
+.ns-ico { font-size:20px; flex-shrink:0; }
+.next-step-row strong { font-size:13px; color:var(--g800); display:block; margin-bottom:2px; }
+.next-step-row span   { font-size:12px; color:var(--g600); }
+.success-btns { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+
+/* ── RESPONSIVE ────────────────────────────────────── */
+@media (max-width:600px) {
+  .form-grid   { grid-template-columns:1fr; }
+  .pay-methods { grid-template-columns:repeat(3,1fr); }
+  .step-line   { min-width:16px; }
+  .appt-booking { padding:16px 12px 40px; }
+}
+
+/* VALIDATION TOAST */
+.val-toast {
+  background: #fef2f2;
+  border: 2px solid #fca5a5;
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: shake 0.4s ease;
+}
+@keyframes shake {
+  0%,100%{transform:translateX(0)}
+  20%,60%{transform:translateX(-5px)}
+  40%,80%{transform:translateX(5px)}
+}&lt;/css&gt;&lt;data_table&gt;sp_instance&lt;/data_table&gt;&lt;demo_data/&gt;&lt;description&gt;Widget to display and manage functionalities&lt;/description&gt;&lt;docs/&gt;&lt;field_list/&gt;&lt;has_preview&gt;false&lt;/has_preview&gt;&lt;id&gt;appointment_booking&lt;/id&gt;&lt;internal&gt;false&lt;/internal&gt;&lt;link&gt;&lt;![CDATA[function link(scope, element, attrs, controller) {
+  
+}]]&gt;&lt;/link&gt;&lt;name&gt;Appointment Booking&lt;/name&gt;&lt;option_schema/&gt;&lt;public&gt;true&lt;/public&gt;&lt;roles/&gt;&lt;script&gt;&lt;![CDATA[(function() {
+
+  data.test        = null;
+  data.currentUser = null;
+  data.success     = false;
+  data.error       = '';
+  data.appointmentNumber = '';
+
+  // ── Safe user detection (no isAnonymous — not allowed in scope) ──
+  try {
+    var userID   = gs.getUserID()   || '';
+    var userName = gs.getUserName() || '';
+
+    if (userID &amp;&amp; userName !== 'guest' &amp;&amp; userName !== '') {
+      var userGr = new GlideRecord('sys_user');
+      if (userGr.get(userID)) {
+        data.currentUser = {
+          first_name: userGr.getValue('first_name')    || '',
+          last_name:  userGr.getValue('last_name')     || '',
+          email:      userGr.getValue('email')         || '',
+          phone:      userGr.getValue('mobile_phone')  || userGr.getValue('phone') || ''
+        };
+      }
+    }
+  } catch(e) {
+    gs.error('Booking init error: ' + e.message);
+  }
+
+  // ── Handle appointment creation ──────────────────────────
+  if (input &amp;&amp; input.action === 'create_appointment') {
+    try {
+      var formData      = input.data.form        || {};
+      var testSysId     = input.data.test_sys_id || '';
+      var totalAmount   = parseFloat(input.data.total_amount) || 0;
+      var paymentMethod = input.data.payment_method || 'card';
+
+      // Fetch test name &amp; code for email
+      var testName = '', testCode = '';
+      if (testSysId) {
+        var testGr = new GlideRecord('x_2056539_medica_0_diagnostic_test');
+        if (testGr.get(testSysId)) {
+          testName = testGr.getValue('test_name') || '';
+          testCode = testGr.getValue('test_code') || '';
+        }
+      }
+
+      // ── Find or create PATIENT record (not sys_user!) ────
+      var patientSysId = '';
+      var patGr = new GlideRecord('x_2056539_medica_0_patient');
+      patGr.addQuery('email', formData.email || '');
+      patGr.setLimit(1);
+      patGr.query();
+
+      if (patGr.next()) {
+        // Update existing patient
+        patientSysId = patGr.getUniqueValue();
+        patGr.setValue('first_name',   formData.first_name   || '');
+        patGr.setValue('last_name',    formData.last_name    || '');
+        patGr.setValue('phone_number', formData.phone_number || '');
+        patGr.setValue('address',      formData.address      || '');
+        patGr.update();
+      } else {
+        // Create new patient record
+        var newPat = new GlideRecord('x_2056539_medica_0_patient');
+        newPat.initialize();
+        newPat.setValue('first_name',    formData.first_name    || '');
+        newPat.setValue('last_name',     formData.last_name     || '');
+        newPat.setValue('email',         formData.email         || '');
+        newPat.setValue('phone_number',  formData.phone_number  || '');
+        newPat.setValue('date_of_birth', formData.date_of_birth || '');
+        newPat.setValue('gender',        formData.gender        || '');
+        newPat.setValue('address',       formData.address       || '');
+
+        // Link to sys_user if logged in
+        var uid = gs.getUserID();
+        if (uid &amp;&amp; gs.getUserName() !== 'guest') {
+          newPat.setValue('user', uid);
+        }
+        patientSysId = newPat.insert();
+      }
+
+      if (!patientSysId) {
+        data.error = 'Failed to create patient record. Check table ACLs.';
+        return;
+      }
+
+      // ── Create appointment ────────────────────────────────
+      var apptNum = 'APPT-' + new Date().getFullYear() + '-' +
+                    (Math.floor(Math.random() * 90000) + 10000);
+
+      var apptGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+      apptGr.initialize();
+      apptGr.setValue('appointment_number', apptNum);
+      apptGr.setValue('patient',            patientSysId);  // links to patient table
+      apptGr.setValue('test',               testSysId);     // links to diagnostic test
+      apptGr.setValue('status',             'pending');
+      apptGr.setValue('approval_status',    'requested');
+      apptGr.setValue('payment_status',     'paid');
+      apptGr.setValue('total_amount',       totalAmount);
+      apptGr.setValue('scheduled_date',     formData.scheduled_date || '');
+      apptGr.setValue('slot_time',          formData.slot_time      || '');
+      apptGr.setValue('notes',              formData.notes          || '');
+      apptGr.setValue('confirmation_sent',  false);
+      apptGr.setValue('email',              formData.email || '');  // ← NEW: Save email to appointment table
+
+      var uid2 = gs.getUserID();
+      if (uid2 &amp;&amp; gs.getUserName() !== 'guest') {
+        apptGr.setValue('created_by', uid2);
+      }
+
+      var apptSysId = apptGr.insert();
+      if (!apptSysId) {
+        data.error = 'Failed to create appointment. Check table permissions.';
+        return;
+      }
+
+      // ── Patient confirmation email ────────────────────────
+      try {
+        var patEmail = new GlideEmailOutbound();
+        patEmail.setTo(formData.email);
+        patEmail.setSubject('Appointment Confirmed: ' + apptNum + ' — MediCare Diagnostic Center');
+        patEmail.setBody(
+          '&lt;div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;"&gt;' +
+          '&lt;div style="background:#0a2463;padding:24px;text-align:center;border-radius:12px 12px 0 0;"&gt;' +
+          '&lt;h2 style="color:#fff;margin:0;"&gt;]]&gt;🏥&lt;![CDATA[ MediCare Diagnostic Center&lt;/h2&gt;&lt;/div&gt;' +
+          '&lt;div style="background:#f0fdf4;border:2px solid #10b981;border-radius:0 0 12px 12px;padding:24px;"&gt;' +
+          '&lt;h3 style="color:#065f46;"&gt;✅ Booking Confirmed!&lt;/h3&gt;' +
+          '&lt;p&gt;Dear ' + (formData.first_name||'') + ' ' + (formData.last_name||'') + ',&lt;/p&gt;' +
+          '&lt;table style="width:100%;font-size:14px;border-collapse:collapse;background:#fff;border-radius:8px;"&gt;' +
+          '&lt;tr&gt;&lt;td style="padding:10px;background:#f8fafc;font-weight:600;"&gt;Appointment #&lt;/td&gt;&lt;td style="padding:10px;"&gt;' + apptNum + '&lt;/td&gt;&lt;/tr&gt;' +
+          '&lt;tr&gt;&lt;td style="padding:10px;background:#f8fafc;font-weight:600;"&gt;Test&lt;/td&gt;&lt;td style="padding:10px;"&gt;' + testName + ' (' + testCode + ')&lt;/td&gt;&lt;/tr&gt;' +
+          '&lt;tr&gt;&lt;td style="padding:10px;background:#f8fafc;font-weight:600;"&gt;Date&lt;/td&gt;&lt;td style="padding:10px;"&gt;' + (formData.scheduled_date||'') + '&lt;/td&gt;&lt;/tr&gt;' +
+          '&lt;tr&gt;&lt;td style="padding:10px;background:#f8fafc;font-weight:600;"&gt;Time&lt;/td&gt;&lt;td style="padding:10px;"&gt;' + (formData.slot_time||'') + '&lt;/td&gt;&lt;/tr&gt;' +
+          '&lt;tr&gt;&lt;td style="padding:10px;background:#f8fafc;font-weight:600;"&gt;Amount Paid&lt;/td&gt;&lt;td style="padding:10px;color:#10b981;font-weight:700;"&gt;$' + totalAmount.toFixed(2) + '&lt;/td&gt;&lt;/tr&gt;' +
+          '&lt;tr&gt;&lt;td style="padding:10px;background:#f8fafc;font-weight:600;"&gt;Payment&lt;/td&gt;&lt;td style="padding:10px;"&gt;' + paymentMethod + '&lt;/td&gt;&lt;/tr&gt;' +
+          '&lt;/table&gt;' +
+          '&lt;p style="margin-top:16px;color:#6b7280;font-size:13px;"&gt;Pending admin approval. You will receive a confirmation within 24 hours.&lt;/p&gt;' +
+          '&lt;/div&gt;&lt;/div&gt;'
+        );
+        patEmail.save();
+      } catch(emailErr) { gs.warn('Patient email error: ' + emailErr.message); }
+
+      // ── Admin approval email ──────────────────────────────
+      try {
+        var adminEmail = gs.getProperty('medicare.admin.email', '');
+        if (adminEmail) {
+          var adminMail = new GlideEmailOutbound();
+          adminMail.setTo(adminEmail);
+          adminMail.setSubject('[Action Required] New Appointment: ' + apptNum);
+          adminMail.setBody(
+            '&lt;div style="font-family:Arial,sans-serif;max-width:600px;"&gt;' +
+            '&lt;div style="background:#0a2463;padding:20px;border-radius:8px 8px 0 0;"&gt;&lt;h2 style="color:#fff;margin:0;"&gt;New Appointment — Approval Required&lt;/h2&gt;&lt;/div&gt;' +
+            '&lt;div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:0 0 8px 8px;padding:24px;"&gt;' +
+            '&lt;table style="width:100%;font-size:14px;border-collapse:collapse;"&gt;' +
+            '&lt;tr&gt;&lt;td style="padding:8px;font-weight:600;width:40%;"&gt;Appointment #&lt;/td&gt;&lt;td style="padding:8px;"&gt;' + apptNum + '&lt;/td&gt;&lt;/tr&gt;' +
+            '&lt;tr&gt;&lt;td style="padding:8px;font-weight:600;"&gt;Patient&lt;/td&gt;&lt;td style="padding:8px;"&gt;' + (formData.first_name||'') + ' ' + (formData.last_name||'') + '&lt;/td&gt;&lt;/tr&gt;' +
+            '&lt;tr&gt;&lt;td style="padding:8px;font-weight:600;"&gt;Email&lt;/td&gt;&lt;td style="padding:8px;"&gt;' + (formData.email||'') + '&lt;/td&gt;&lt;/tr&gt;' +
+            '&lt;tr&gt;&lt;td style="padding:8px;font-weight:600;"&gt;Phone&lt;/td&gt;&lt;td style="padding:8px;"&gt;' + (formData.phone_number||'') + '&lt;/td&gt;&lt;/tr&gt;' +
+            '&lt;tr&gt;&lt;td style="padding:8px;font-weight:600;"&gt;Test&lt;/td&gt;&lt;td style="padding:8px;"&gt;' + testName + '&lt;/td&gt;&lt;/tr&gt;' +
+            '&lt;tr&gt;&lt;td style="padding:8px;font-weight:600;"&gt;Date &amp;amp; Time&lt;/td&gt;&lt;td style="padding:8px;"&gt;' + (formData.scheduled_date||'') + ' ' + (formData.slot_time||'') + '&lt;/td&gt;&lt;/tr&gt;' +
+            '&lt;tr&gt;&lt;td style="padding:8px;font-weight:600;"&gt;Amount&lt;/td&gt;&lt;td style="padding:8px;color:#059669;font-weight:700;"&gt;$' + totalAmount.toFixed(2) + '&lt;/td&gt;&lt;/tr&gt;' +
+            '&lt;/table&gt;' +
+            '&lt;div style="margin-top:20px;padding:12px;background:#f1f5f9;border-radius:8px;font-size:13px;color:#475569;"&gt;To approve or reject: open the appointment record in ServiceNow backend and change the &lt;strong&gt;Approval Status&lt;/strong&gt; field.&lt;/div&gt;' +
+            '&lt;/div&gt;&lt;/div&gt;'
+          );
+          adminMail.save();
+        }
+      } catch(admErr) { gs.warn('Admin email error: ' + admErr.message); }
+
+      // Mark confirmation sent
+      var cfGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+      if (cfGr.get(apptSysId)) {
+        cfGr.setValue('confirmation_sent', true);
+        cfGr.update();
+      }
+
+      data.success            = true;
+      data.appointment_number = apptNum;
+      data.appointment_sys_id = apptSysId;
+
+    } catch(submitErr) {
+      gs.error('Create Appointment Error: ' + submitErr.message);
+      data.error = submitErr.message;
+    }
+  }
+
+})();]]&gt;&lt;/script&gt;&lt;servicenow&gt;false&lt;/servicenow&gt;&lt;sys_class_name&gt;sp_widget&lt;/sys_class_name&gt;&lt;sys_created_by&gt;admin&lt;/sys_created_by&gt;&lt;sys_created_on&gt;2026-09-04 10:04:13&lt;/sys_created_on&gt;&lt;sys_id&gt;0c00497a834b0350428191d6feaad3f5&lt;/sys_id&gt;&lt;sys_mod_count&gt;2&lt;/sys_mod_count&gt;&lt;sys_name&gt;Appointment Booking&lt;/sys_name&gt;&lt;sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0"&gt;3c5d102a83c38f10428191d6feaad3ca&lt;/sys_package&gt;&lt;sys_policy/&gt;&lt;sys_scope display_value="Medical Diagnosis Center"&gt;3c5d102a83c38f10428191d6feaad3ca&lt;/sys_scope&gt;&lt;sys_update_name&gt;sp_widget_0c00497a834b0350428191d6feaad3f5&lt;/sys_update_name&gt;&lt;sys_updated_by&gt;admin&lt;/sys_updated_by&gt;&lt;sys_updated_on&gt;2026-09-04 10:24:11&lt;/sys_updated_on&gt;&lt;template&gt;&lt;![CDATA[&lt;div class="appt-booking"&gt;
+  &lt;!-- PROGRESS STEPS --&gt;
+  &lt;div class="progress-wrap"&gt;
+    &lt;div class="progress-step" ng-class="{'active': c.step &gt;= 1, 'done': c.step &gt; 1}"&gt;
+      &lt;div class="step-circle"&gt;&lt;i class="fa fa-check" ng-if="c.step &gt; 1"&gt;&lt;/i&gt;&lt;span ng-if="c.step &lt;= 1"&gt;1&lt;/span&gt;&lt;/div&gt;
+      &lt;span class="step-label"&gt;Details&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class="step-line" ng-class="{'filled': c.step &gt; 1}"&gt;&lt;/div&gt;
+    &lt;div class="progress-step" ng-class="{'active': c.step &gt;= 2, 'done': c.step &gt; 2}"&gt;
+      &lt;div class="step-circle"&gt;&lt;i class="fa fa-check" ng-if="c.step &gt; 2"&gt;&lt;/i&gt;&lt;span ng-if="c.step &lt;= 2"&gt;2&lt;/span&gt;&lt;/div&gt;
+      &lt;span class="step-label"&gt;Schedule&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class="step-line" ng-class="{'filled': c.step &gt; 2}"&gt;&lt;/div&gt;
+    &lt;div class="progress-step" ng-class="{'active': c.step &gt;= 3, 'done': c.step &gt; 3}"&gt;
+      &lt;div class="step-circle"&gt;&lt;i class="fa fa-check" ng-if="c.step &gt; 3"&gt;&lt;/i&gt;&lt;span ng-if="c.step &lt;= 3"&gt;3&lt;/span&gt;&lt;/div&gt;
+      &lt;span class="step-label"&gt;Payment&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class="step-line" ng-class="{'filled': c.step &gt; 3}"&gt;&lt;/div&gt;
+    &lt;div class="progress-step" ng-class="{'active': c.step &gt;= 4}"&gt;
+      &lt;div class="step-circle"&gt;&lt;span&gt;4&lt;/span&gt;&lt;/div&gt;
+      &lt;span class="step-label"&gt;Done&lt;/span&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+
+  &lt;!-- TEST BANNER — ng-bind used instead of {{}} for price --&gt;
+  &lt;div class="test-banner" ng-if="c.selectedTest"&gt;
+    &lt;div class="test-banner-icon" ng-bind="c.getCategoryIcon(c.selectedTest.category)"&gt;&lt;/div&gt;
+    &lt;div class="test-banner-info"&gt;
+      &lt;span class="test-banner-name" ng-bind="c.selectedTest.test_name"&gt;&lt;/span&gt;
+      &lt;span class="test-banner-meta"&gt;
+        &lt;span ng-bind="c.selectedTest.category"&gt;&lt;/span&gt; &amp;middot;
+        Code: &lt;span ng-bind="c.selectedTest.test_code"&gt;&lt;/span&gt; &amp;middot;
+        Duration: &lt;span ng-bind="c.selectedTest.test_duration"&gt;&lt;/span&gt;
+      &lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class="test-banner-price"&gt;
+      &lt;span class="price-tag"&gt;$&lt;span ng-bind="c.testPrice"&gt;&lt;/span&gt;&lt;/span&gt;
+      &lt;button class="btn-change-test" ng-click="c.changeTest()"&gt;Change Test&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+
+  &lt;div class="no-test-warn" ng-if="!c.selectedTest"&gt;
+    &lt;i class="fa fa-exclamation-triangle"&gt;&lt;/i&gt;
+    No test selected. &lt;a ng-click="c.changeTest()"&gt;Back to catalog&lt;/a&gt;
+  &lt;/div&gt;
+
+  &lt;!-- ===== STEP 1: PATIENT DETAILS ===== --&gt;
+  &lt;div class="booking-step" ng-show="c.step === 1"&gt;
+    &lt;div class="step-header"&gt;
+      &lt;h2&gt;&amp;#128100; Patient Information&lt;/h2&gt;
+      &lt;p&gt;Fill in your personal details to proceed.&lt;/p&gt;
+    &lt;/div&gt;
+
+    &lt;div class="form-card"&gt;
+      &lt;div class="form-grid"&gt;
+
+        &lt;div class="form-group" ng-class="{'has-error': c.errors.first_name}"&gt;
+          &lt;label class="form-label req"&gt;First Name&lt;/label&gt;
+          &lt;input class="form-input" type="text" placeholder="First name"
+            ng-model="c.form.first_name" ng-change="c.clearError('first_name')" /&gt;
+          &lt;span class="err-msg" ng-if="c.errors.first_name" ng-bind="c.errors.first_name"&gt;&lt;/span&gt;
+        &lt;/div&gt;
+
+        &lt;div class="form-group" ng-class="{'has-error': c.errors.last_name}"&gt;
+          &lt;label class="form-label req"&gt;Last Name&lt;/label&gt;
+          &lt;input class="form-input" type="text" placeholder="Last name"
+            ng-model="c.form.last_name" ng-change="c.clearError('last_name')" /&gt;
+          &lt;span class="err-msg" ng-if="c.errors.last_name" ng-bind="c.errors.last_name"&gt;&lt;/span&gt;
+        &lt;/div&gt;
+
+        &lt;div class="form-group" ng-class="{'has-error': c.errors.email}"&gt;
+          &lt;label class="form-label req"&gt;Email Address&lt;/label&gt;
+          &lt;input class="form-input" type="email" placeholder="you@example.com"
+            ng-model="c.form.email" ng-change="c.clearError('email')" /&gt;
+          &lt;span class="err-msg" ng-if="c.errors.email" ng-bind="c.errors.email"&gt;&lt;/span&gt;
+        &lt;/div&gt;
+
+        &lt;div class="form-group" ng-class="{'has-error': c.errors.phone_number}"&gt;
+          &lt;label class="form-label req"&gt;Phone Number&lt;/label&gt;
+          &lt;input class="form-input" type="tel" placeholder="+1 555 000 0000"
+            ng-model="c.form.phone_number" ng-change="c.clearError('phone_number')" /&gt;
+          &lt;span class="err-msg" ng-if="c.errors.phone_number" ng-bind="c.errors.phone_number"&gt;&lt;/span&gt;
+        &lt;/div&gt;
+
+        &lt;div class="form-group" ng-class="{'has-error': c.errors.date_of_birth}"&gt;
+          &lt;label class="form-label req"&gt;Date of Birth&lt;/label&gt;
+          &lt;input class="form-input" type="date"
+            ng-model="c.form.date_of_birth" ng-change="c.clearError('date_of_birth')" /&gt;
+          &lt;span class="err-msg" ng-if="c.errors.date_of_birth" ng-bind="c.errors.date_of_birth"&gt;&lt;/span&gt;
+        &lt;/div&gt;
+
+        &lt;!-- GENDER custom dropdown --&gt;
+        &lt;div class="form-group" ng-class="{'has-error': c.errors.gender}"&gt;
+          &lt;label class="form-label req"&gt;Gender&lt;/label&gt;
+          &lt;div class="cust-select" ng-class="{'open': c.genderOpen}"&gt;
+            &lt;div class="cust-sel-trigger" ng-click="c.genderOpen = !c.genderOpen; c.bankOpen = false;"&gt;
+              &lt;span class="cust-sel-val" ng-if="!c.form.gender" style="color:#94a3b8;"&gt;-- Select Gender --&lt;/span&gt;
+              &lt;span class="cust-sel-val" ng-if="c.form.gender" ng-bind="c.getGenderLabel(c.form.gender)"&gt;&lt;/span&gt;
+              &lt;i class="fa" ng-class="c.genderOpen ? 'fa-chevron-up' : 'fa-chevron-down'" style="color:#94a3b8;font-size:12px;"&gt;&lt;/i&gt;
+            &lt;/div&gt;
+            &lt;div class="cust-sel-menu" ng-if="c.genderOpen"&gt;
+              &lt;div class="cust-sel-item" ng-repeat="opt in c.genderOptions"
+                ng-click="c.selectGender(opt.value)"
+                ng-class="{'selected': c.form.gender === opt.value}"
+                ng-bind="opt.label"&gt;
+              &lt;/div&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+          &lt;span class="err-msg" ng-if="c.errors.gender" ng-bind="c.errors.gender"&gt;&lt;/span&gt;
+        &lt;/div&gt;
+
+        &lt;div class="form-group form-full"&gt;
+          &lt;label class="form-label"&gt;Address&lt;/label&gt;
+          &lt;textarea class="form-input" rows="2" placeholder="Your full address"
+            ng-model="c.form.address"&gt;&lt;/textarea&gt;
+        &lt;/div&gt;
+
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div class="step-actions"&gt;
+      &lt;button class="btn-back" ng-click="c.changeTest()"&gt;&lt;i class="fa fa-arrow-left"&gt;&lt;/i&gt; Back to Catalog&lt;/button&gt;
+      &lt;button class="btn-next" ng-click="c.validateStep1()"&gt;Continue &lt;i class="fa fa-arrow-right"&gt;&lt;/i&gt;&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+  &lt;!-- Validation message --&gt;
+&lt;div ng-if="c.validationMsg" style="background:#fef2f2;border:2px solid #fca5a5;border-radius:10px;padding:12px 16px;margin-bottom:16px;color:#b91c1c;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;"&gt;
+  &lt;i class="fa fa-exclamation-circle"&gt;&lt;/i&gt;
+  &lt;span&gt;{{c.validationMsg}}&lt;/span&gt;
+&lt;/div&gt;
+
+  &lt;!-- ===== STEP 2: SCHEDULE ===== --&gt;
+  &lt;div class="booking-step" ng-show="c.step === 2"&gt;
+    &lt;div class="step-header"&gt;
+      &lt;h2&gt;&amp;#128197; Schedule Appointment&lt;/h2&gt;
+      &lt;p&gt;Choose your preferred date and time slot.&lt;/p&gt;
+    &lt;/div&gt;
+
+    &lt;div class="form-card"&gt;
+      &lt;div class="form-group" ng-class="{'has-error': c.errors.scheduled_date}"&gt;
+        &lt;label class="form-label req"&gt;Preferred Date&lt;/label&gt;
+        &lt;input class="form-input" type="date" ng-model="c.form.scheduled_date"
+          ng-attr-min="{{c.minDate}}" ng-change="c.onDateChange()" /&gt;
+        &lt;span class="err-msg" ng-if="c.errors.scheduled_date" ng-bind="c.errors.scheduled_date"&gt;&lt;/span&gt;
+      &lt;/div&gt;
+
+      &lt;div class="slots-section" ng-if="c.form.scheduled_date"&gt;
+        &lt;label class="form-label req" style="display:block;margin-bottom:10px;"&gt;Available Time Slots&lt;/label&gt;
+        &lt;div class="slots-grid"&gt;
+          &lt;button class="slot-btn" ng-repeat="slot in c.timeSlots"
+            ng-class="{'selected': c.form.slot_time === slot}"
+            ng-click="c.selectSlot(slot)"
+            ng-bind="slot"&gt;
+          &lt;/button&gt;
+        &lt;/div&gt;
+        &lt;span class="err-msg" ng-if="c.errors.slot_time" ng-bind="c.errors.slot_time"&gt;&lt;/span&gt;
+      &lt;/div&gt;
+
+      &lt;div class="form-group" style="margin-top:20px;"&gt;
+        &lt;label class="form-label"&gt;Notes (optional)&lt;/label&gt;
+        &lt;textarea class="form-input" rows="3" placeholder="Any special instructions..."
+          ng-model="c.form.notes"&gt;&lt;/textarea&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;!-- Booking Summary — FIX: use ng-bind for all dynamic values --&gt;
+    &lt;div class="booking-summary"&gt;
+      &lt;h4&gt;&amp;#128203; Booking Summary&lt;/h4&gt;
+      &lt;div class="sum-row"&gt;
+        &lt;span&gt;Test&lt;/span&gt;
+        &lt;strong ng-bind="c.selectedTest.test_name"&gt;&lt;/strong&gt;
+      &lt;/div&gt;
+      &lt;div class="sum-row"&gt;
+        &lt;span&gt;Patient&lt;/span&gt;
+        &lt;strong&gt;&lt;span ng-bind="c.form.first_name"&gt;&lt;/span&gt; &lt;span ng-bind="c.form.last_name"&gt;&lt;/span&gt;&lt;/strong&gt;
+      &lt;/div&gt;
+      &lt;div class="sum-row" ng-if="c.form.scheduled_date"&gt;
+        &lt;span&gt;Date&lt;/span&gt;
+        &lt;strong ng-bind="c.formatDateDisplay(c.form.scheduled_date)"&gt;&lt;/strong&gt;
+      &lt;/div&gt;
+      &lt;div class="sum-row" ng-if="c.form.slot_time"&gt;
+        &lt;span&gt;Time&lt;/span&gt;
+        &lt;strong ng-bind="c.form.slot_time"&gt;&lt;/strong&gt;
+      &lt;/div&gt;
+      &lt;div class="sum-row"&gt;
+        &lt;span&gt;Amount&lt;/span&gt;
+        &lt;strong style="color:#0a2463;"&gt;$&lt;span ng-bind="c.testPrice"&gt;&lt;/span&gt;&lt;/strong&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div class="step-actions"&gt;
+      &lt;button class="btn-back" ng-click="c.prevStep()"&gt;&lt;i class="fa fa-arrow-left"&gt;&lt;/i&gt; Back&lt;/button&gt;
+      &lt;button class="btn-next" ng-click="c.validateStep2()"&gt;Continue to Payment &lt;i class="fa fa-arrow-right"&gt;&lt;/i&gt;&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+  &lt;!-- Validation message --&gt;
+&lt;div ng-if="c.validationMsg" style="background:#fef2f2;border:2px solid #fca5a5;border-radius:10px;padding:12px 16px;margin-bottom:16px;color:#b91c1c;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;"&gt;
+  &lt;i class="fa fa-exclamation-circle"&gt;&lt;/i&gt;
+  &lt;span&gt;{{c.validationMsg}}&lt;/span&gt;
+&lt;/div&gt;
+
+  &lt;!-- ===== STEP 3: PAYMENT ===== --&gt;
+  &lt;div class="booking-step" ng-show="c.step === 3"&gt;
+    &lt;div class="step-header"&gt;
+      &lt;h2&gt;&amp;#128179; Payment&lt;/h2&gt;
+      &lt;p&gt;Select a payment method and confirm your booking.&lt;/p&gt;
+    &lt;/div&gt;
+
+    &lt;!-- Order Summary — all using ng-bind --&gt;
+    &lt;div class="order-card"&gt;
+      &lt;div class="order-hdr"&gt;Order Summary&lt;/div&gt;
+      &lt;div class="order-row"&gt;
+        &lt;span ng-bind="c.selectedTest.test_name"&gt;&lt;/span&gt;
+        &lt;span&gt;$&lt;span ng-bind="c.testPrice"&gt;&lt;/span&gt;&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="order-row"&gt;
+        &lt;span&gt;Date &amp;amp; Time&lt;/span&gt;
+        &lt;span&gt;&lt;span ng-bind="c.formatDateDisplay(c.form.scheduled_date)"&gt;&lt;/span&gt; &amp;middot; &lt;span ng-bind="c.form.slot_time"&gt;&lt;/span&gt;&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="order-row"&gt;&lt;span&gt;Service Fee&lt;/span&gt;&lt;span&gt;$0.00&lt;/span&gt;&lt;/div&gt;
+      &lt;div class="order-divider"&gt;&lt;/div&gt;
+      &lt;div class="order-total"&gt;
+        &lt;span&gt;Total&lt;/span&gt;
+        &lt;span class="order-total-price"&gt;$&lt;span ng-bind="c.testPrice"&gt;&lt;/span&gt;&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;!-- Payment methods --&gt;
+    &lt;label class="form-label" style="display:block;margin-bottom:12px;"&gt;Select Payment Method&lt;/label&gt;
+    &lt;div class="pay-methods"&gt;
+      &lt;div class="pay-method" ng-class="{'active': c.payment.method === 'card'}" ng-click="c.setPaymentMethod('card')"&gt;
+        &lt;span class="pay-icon"&gt;&amp;#128179;&lt;/span&gt;&lt;span class="pay-lbl"&gt;Card&lt;/span&gt;
+        &lt;span class="pay-tick" ng-if="c.payment.method === 'card'"&gt;&amp;#10003;&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="pay-method" ng-class="{'active': c.payment.method === 'upi'}" ng-click="c.setPaymentMethod('upi')"&gt;
+        &lt;span class="pay-icon"&gt;&amp;#128241;&lt;/span&gt;&lt;span class="pay-lbl"&gt;UPI&lt;/span&gt;
+        &lt;span class="pay-tick" ng-if="c.payment.method === 'upi'"&gt;&amp;#10003;&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="pay-method" ng-class="{'active': c.payment.method === 'netbanking'}" ng-click="c.setPaymentMethod('netbanking')"&gt;
+        &lt;span class="pay-icon"&gt;&amp;#127974;&lt;/span&gt;&lt;span class="pay-lbl"&gt;Net Banking&lt;/span&gt;
+        &lt;span class="pay-tick" ng-if="c.payment.method === 'netbanking'"&gt;&amp;#10003;&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="pay-method" ng-class="{'active': c.payment.method === 'insurance'}" ng-click="c.setPaymentMethod('insurance')"&gt;
+        &lt;span class="pay-icon"&gt;&amp;#127973;&lt;/span&gt;&lt;span class="pay-lbl"&gt;Insurance&lt;/span&gt;
+        &lt;span class="pay-tick" ng-if="c.payment.method === 'insurance'"&gt;&amp;#10003;&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="pay-method" ng-class="{'active': c.payment.method === 'cash'}" ng-click="c.setPaymentMethod('cash')"&gt;
+        &lt;span class="pay-icon"&gt;&amp;#128181;&lt;/span&gt;&lt;span class="pay-lbl"&gt;Pay on Arrival&lt;/span&gt;
+        &lt;span class="pay-tick" ng-if="c.payment.method === 'cash'"&gt;&amp;#10003;&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;!-- Card --&gt;
+    &lt;div class="form-card" ng-if="c.payment.method === 'card'"&gt;
+      &lt;div class="secure-tag"&gt;&lt;i class="fa fa-lock"&gt;&lt;/i&gt; Secure Demo Payment&lt;/div&gt;
+      &lt;div class="form-grid"&gt;
+        &lt;div class="form-group form-full"&gt;
+          &lt;label class="form-label"&gt;Cardholder Name&lt;/label&gt;
+          &lt;input class="form-input" type="text" placeholder="Name on card" ng-model="c.payment.card_name" /&gt;
+        &lt;/div&gt;
+        &lt;div class="form-group form-full"&gt;
+          &lt;label class="form-label"&gt;Card Number&lt;/label&gt;
+          &lt;input class="form-input" type="text" placeholder="4242 4242 4242 4242" maxlength="19" ng-model="c.payment.card_number" /&gt;
+        &lt;/div&gt;
+        &lt;div class="form-group"&gt;
+          &lt;label class="form-label"&gt;Expiry&lt;/label&gt;
+          &lt;input class="form-input" type="text" placeholder="MM/YY" maxlength="5" ng-model="c.payment.expiry" /&gt;
+        &lt;/div&gt;
+        &lt;div class="form-group"&gt;
+          &lt;label class="form-label"&gt;CVV&lt;/label&gt;
+          &lt;input class="form-input" type="password" placeholder="***" maxlength="4" ng-model="c.payment.cvv" /&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;!-- UPI --&gt;
+    &lt;div class="form-card" ng-if="c.payment.method === 'upi'"&gt;
+      &lt;div class="secure-tag"&gt;&lt;i class="fa fa-lock"&gt;&lt;/i&gt; UPI Demo Payment&lt;/div&gt;
+      &lt;div class="form-group" style="margin-bottom:16px;"&gt;
+        &lt;label class="form-label"&gt;UPI ID&lt;/label&gt;
+        &lt;input class="form-input" type="text" placeholder="yourname@upi" ng-model="c.payment.upi_id" /&gt;
+      &lt;/div&gt;
+      &lt;label class="form-label" style="display:block;margin-bottom:10px;"&gt;Or choose app&lt;/label&gt;
+      &lt;div class="upi-apps"&gt;
+        &lt;div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'gpay'}" ng-click="c.selectUpiApp('gpay')"&gt;
+          &lt;div class="upi-app-logo" style="background:linear-gradient(135deg,#4285f4,#34a853);"&gt;G&lt;/div&gt;
+          &lt;span&gt;GPay&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'phonepe'}" ng-click="c.selectUpiApp('phonepe')"&gt;
+          &lt;div class="upi-app-logo" style="background:#5f259f;"&gt;P&lt;/div&gt;
+          &lt;span&gt;PhonePe&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'paytm'}" ng-click="c.selectUpiApp('paytm')"&gt;
+          &lt;div class="upi-app-logo" style="background:#00b9f5;color:#002970;"&gt;P&lt;/div&gt;
+          &lt;span&gt;Paytm&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'bhim'}" ng-click="c.selectUpiApp('bhim')"&gt;
+          &lt;div class="upi-app-logo" style="background:#ff6600;"&gt;B&lt;/div&gt;
+          &lt;span&gt;BHIM&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class="upi-app-tile" ng-class="{'upi-active': c.payment.upi_app === 'amazonpay'}" ng-click="c.selectUpiApp('amazonpay')"&gt;
+          &lt;div class="upi-app-logo" style="background:#ff9900;color:#232f3e;"&gt;A&lt;/div&gt;
+          &lt;span&gt;Amazon&lt;/span&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;!-- Net Banking --&gt;
+    &lt;div class="form-card" ng-if="c.payment.method === 'netbanking'"&gt;
+      &lt;div class="secure-tag"&gt;&lt;i class="fa fa-lock"&gt;&lt;/i&gt; Net Banking Demo&lt;/div&gt;
+      &lt;div class="form-group"&gt;
+        &lt;label class="form-label"&gt;Select Your Bank&lt;/label&gt;
+        &lt;div class="cust-select" ng-class="{'open': c.bankOpen}"&gt;
+          &lt;div class="cust-sel-trigger" ng-click="c.bankOpen = !c.bankOpen; c.genderOpen = false;"&gt;
+            &lt;span class="cust-sel-val" ng-if="!c.payment.bank" style="color:#94a3b8;"&gt;-- Select Bank --&lt;/span&gt;
+            &lt;span class="cust-sel-val" ng-if="c.payment.bank" ng-bind="c.getBankLabel(c.payment.bank)"&gt;&lt;/span&gt;
+            &lt;i class="fa" ng-class="c.bankOpen ? 'fa-chevron-up' : 'fa-chevron-down'" style="color:#94a3b8;font-size:12px;"&gt;&lt;/i&gt;
+          &lt;/div&gt;
+          &lt;div class="cust-sel-menu" ng-if="c.bankOpen"&gt;
+            &lt;div class="cust-sel-item" ng-repeat="b in c.bankOptions"
+              ng-click="c.selectBank(b.value)"
+              ng-class="{'selected': c.payment.bank === b.value}"
+              ng-bind="b.label"&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;!-- Insurance --&gt;
+    &lt;div class="form-card" ng-if="c.payment.method === 'insurance'"&gt;
+      &lt;div class="secure-tag"&gt;&amp;#127973; Insurance Payment&lt;/div&gt;
+      &lt;div class="form-grid"&gt;
+        &lt;div class="form-group"&gt;
+          &lt;label class="form-label"&gt;Provider&lt;/label&gt;
+          &lt;input class="form-input" type="text" placeholder="e.g. BlueCross, Aetna" ng-model="c.payment.insurance_provider" /&gt;
+        &lt;/div&gt;
+        &lt;div class="form-group"&gt;
+          &lt;label class="form-label"&gt;Policy Number&lt;/label&gt;
+          &lt;input class="form-input" type="text" placeholder="Policy / Member ID" ng-model="c.payment.policy_number" /&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;!-- Cash --&gt;
+    &lt;div class="form-card cash-card" ng-if="c.payment.method === 'cash'"&gt;
+      &lt;div class="cash-emoji"&gt;&amp;#128181;&lt;/div&gt;
+      &lt;h4&gt;Pay on Arrival&lt;/h4&gt;
+      &lt;p&gt;Pay &lt;strong&gt;$&lt;span ng-bind="c.testPrice"&gt;&lt;/span&gt;&lt;/strong&gt; at the center when you arrive.&lt;/p&gt;
+      &lt;p class="cash-note"&gt;Carry a valid ID. Please arrive 15 minutes early.&lt;/p&gt;
+    &lt;/div&gt;
+
+    &lt;div class="step-actions"&gt;
+      &lt;button class="btn-back" ng-click="c.prevStep()"&gt;&lt;i class="fa fa-arrow-left"&gt;&lt;/i&gt; Back&lt;/button&gt;
+      &lt;button class="btn-pay" ng-click="c.processPayment()" ng-disabled="c.processing"&gt;
+        &lt;span ng-if="!c.processing"&gt;
+          &lt;i class="fa fa-lock"&gt;&lt;/i&gt; Confirm &amp;amp; Pay $&lt;span ng-bind="c.testPrice"&gt;&lt;/span&gt;
+        &lt;/span&gt;
+        &lt;span ng-if="c.processing"&gt;&lt;i class="fa fa-spinner fa-spin"&gt;&lt;/i&gt; Processing...&lt;/span&gt;
+      &lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+
+  &lt;!-- ===== STEP 4: SUCCESS ===== --&gt;
+  &lt;div class="booking-step success-wrap" ng-show="c.step === 4"&gt;
+    &lt;div class="success-circle"&gt;&lt;i class="fa fa-check"&gt;&lt;/i&gt;&lt;/div&gt;
+    &lt;h2 class="success-title"&gt;Appointment Confirmed! &amp;#127881;&lt;/h2&gt;
+    &lt;p class="success-sub"&gt;Pending admin approval. Confirmation sent to &lt;strong ng-bind="c.form.email"&gt;&lt;/strong&gt;&lt;/p&gt;
+
+    &lt;div class="conf-card"&gt;
+      &lt;div class="conf-row"&gt;&lt;span&gt;Appointment #&lt;/span&gt;&lt;strong class="appt-code" ng-bind="c.data.appointmentNumber"&gt;&lt;/strong&gt;&lt;/div&gt;
+      &lt;div class="conf-row"&gt;&lt;span&gt;Patient&lt;/span&gt;&lt;strong&gt;&lt;span ng-bind="c.form.first_name"&gt;&lt;/span&gt; &lt;span ng-bind="c.form.last_name"&gt;&lt;/span&gt;&lt;/strong&gt;&lt;/div&gt;
+      &lt;div class="conf-row"&gt;&lt;span&gt;Test&lt;/span&gt;&lt;strong ng-bind="c.selectedTest.test_name"&gt;&lt;/strong&gt;&lt;/div&gt;
+      &lt;div class="conf-row"&gt;&lt;span&gt;Date &amp;amp; Time&lt;/span&gt;&lt;strong&gt;&lt;span ng-bind="c.formatDateDisplay(c.form.scheduled_date)"&gt;&lt;/span&gt; &amp;middot; &lt;span ng-bind="c.form.slot_time"&gt;&lt;/span&gt;&lt;/strong&gt;&lt;/div&gt;
+      &lt;div class="conf-row"&gt;&lt;span&gt;Amount Paid&lt;/span&gt;&lt;strong class="paid-green"&gt;$&lt;span ng-bind="c.testPrice"&gt;&lt;/span&gt; &amp;#10003;&lt;/strong&gt;&lt;/div&gt;
+      &lt;div class="conf-row"&gt;&lt;span&gt;Payment Via&lt;/span&gt;&lt;strong ng-bind="c.getPaymentLabel(c.payment.method)"&gt;&lt;/strong&gt;&lt;/div&gt;
+      &lt;div class="conf-row"&gt;&lt;span&gt;Status&lt;/span&gt;&lt;strong class="status-warn"&gt;&amp;#9203; Pending Approval&lt;/strong&gt;&lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div class="next-steps-wrap"&gt;
+      &lt;h4&gt;What happens next?&lt;/h4&gt;
+      &lt;div class="next-step-row"&gt;&lt;span class="ns-ico"&gt;&amp;#128231;&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Confirmation Email&lt;/strong&gt;&lt;span&gt;Check your inbox for booking details&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;div class="next-step-row"&gt;&lt;span class="ns-ico"&gt;&amp;#9989;&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Admin Approval&lt;/strong&gt;&lt;span&gt;Reviewed within 24 hours&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;div class="next-step-row"&gt;&lt;span class="ns-ico"&gt;&amp;#128276;&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Reminder&lt;/strong&gt;&lt;span&gt;You will get an alert 24h before your test&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div class="success-btns"&gt;
+      &lt;button class="btn-next" ng-click="c.viewMyAppointments()"&gt;&lt;i class="fa fa-list"&gt;&lt;/i&gt; View My Bookings&lt;/button&gt;
+      &lt;button class="btn-back" ng-click="c.bookAnother()"&gt;Book Another Test&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+
+&lt;/div&gt;]]&gt;&lt;/template&gt;&lt;/sp_widget&gt;&lt;/record_update&gt;</payload>
+        <payload_hash>1855939251</payload_hash>
+        <record_name>Appointment Booking</record_name>
+        <reverted_from/>
+        <source>5eeda76e830fcf10428191d6feaad340</source>
+        <source_table>sys_update_set</source_table>
+        <state>previous</state>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 10:24:11</sys_created_on>
+        <sys_id>52b4c936838b0350428191d6feaad340</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_recorded_at>1a06bf288850000001</sys_recorded_at>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 10:24:11</sys_updated_on>
+        <type>Widget</type>
+        <update_guid>1ab40572510b035033622abfb231c713</update_guid>
+        <update_guid_history>1ab40572510b035033622abfb231c713:1855939251,1c90813ee34b03509730bd27b7989144:545982740,2520c9ba854b035062d2301a9116ae74:-998935184</update_guid_history>
+    </sys_update_version>
+    <sys_metadata_delete action="INSERT_OR_UPDATE">
+        <sys_audit_delete display_value="Appointment Booking">ab18e5fe838f0350428191d6feaad397</sys_audit_delete>
+        <sys_class_name>sys_metadata_delete</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 12:58:51</sys_created_on>
+        <sys_db_object display_value="" name="sp_widget">sp_widget</sys_db_object>
+        <sys_id>4b82e004d30749c9aa4ca16143c47761</sys_id>
+        <sys_metadata>0c00497a834b0350428191d6feaad3f5</sys_metadata>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>Appointment Booking</sys_name>
+        <sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package>
+        <sys_parent/>
+        <sys_policy/>
+        <sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope>
+        <sys_scope_delete display_value="">4ef17df27bab4c4dbc24d600694e8fb9</sys_scope_delete>
+        <sys_update_name>sp_widget_0c00497a834b0350428191d6feaad3f5</sys_update_name>
+        <sys_update_version display_value="sp_widget_0c00497a834b0350428191d6feaad3f5">52b4c936838b0350428191d6feaad340</sys_update_version>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 12:58:51</sys_updated_on>
+    </sys_metadata_delete>
+</record_update>

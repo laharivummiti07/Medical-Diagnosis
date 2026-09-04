@@ -1,0 +1,1146 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sp_widget">
+    <sp_widget action="INSERT_OR_UPDATE">
+        <category>custom</category>
+        <client_script><![CDATA[api.controller=function() {
+  var c = this;
+
+  // ── PAGE IDs (confirmed from your ServiceNow Pages list) ──
+  var PAGE_IDS = {
+    home:       'test_catalog',   // ← CORRECT page ID from your screenshot
+    labReports: 'lab_reports'
+  };
+
+  c.loading = true;
+  c.activeTab = 'all';
+  c.searchQuery = '';
+  c.sortBy = 'date_desc';
+  c.filteredAppointments = [];
+  c.showModal = false;
+  c.selectedAppt = null;
+
+  c.tabs = [
+    { key: 'all',       label: 'All',       count: 0 },
+    { key: 'pending',   label: 'Pending',   count: 0 },
+    { key: 'confirmed', label: 'Confirmed', count: 0 },
+    { key: 'completed', label: 'Completed', count: 0 },
+    { key: 'cancelled', label: 'Cancelled', count: 0 }
+  ];
+
+  c.stats = [
+    { icon: ']]>📋<![CDATA[', label: 'Total',     count: 0 },
+    { icon: '✅', label: 'Confirmed', count: 0 },
+    { icon: '⏳', label: 'Pending',   count: 0 },
+    { icon: '✔️', label: 'Completed', count: 0 }
+  ];
+
+  // ── NAVIGATION ────────────────────────────────────────────
+  var _nav = function(pageId) {
+    var portalId = window.location.pathname.split('/')[1] || 'sp';
+    window.location.href = '/' + portalId + '?id=' + pageId;
+  };
+
+  // ── INIT ──────────────────────────────────────────────────
+  // KEY FIX: ServiceNow populates c.data synchronously BEFORE this runs.
+  // $watch('data') never fires. Just read data directly in $onInit.
+  c.$onInit = function() {
+    c.loading = false;
+    c.buildStats();
+    c.filterAppointments();
+  };
+
+  c.buildStats = function() {
+    var appts = c.data.appointments || [];
+    c.stats[0].count = appts.length;
+    c.stats[1].count = appts.filter(function(a) { return a.status === 'confirmed'; }).length;
+    c.stats[2].count = appts.filter(function(a) { return a.status === 'pending';   }).length;
+    c.stats[3].count = appts.filter(function(a) { return a.status === 'completed'; }).length;
+    c.tabs.forEach(function(tab) {
+      tab.count = (tab.key === 'all')
+        ? appts.length
+        : appts.filter(function(a) { return a.status === tab.key; }).length;
+    });
+  };
+
+  c.setTab = function(key) { c.activeTab = key; c.filterAppointments(); };
+
+  c.filterAppointments = function() {
+    var appts = angular.copy(c.data.appointments || []);
+    var q   = (c.searchQuery || '').toLowerCase();
+    var tab = c.activeTab;
+    c.filteredAppointments = appts.filter(function(a) {
+      var matchTab    = (tab === 'all') || (a.status === tab);
+      var matchSearch = !q ||
+        (a.test_name          && a.test_name.toLowerCase().indexOf(q) !== -1) ||
+        (a.appointment_number && a.appointment_number.toLowerCase().indexOf(q) !== -1) ||
+        (a.test_category      && a.test_category.toLowerCase().indexOf(q) !== -1);
+      return matchTab && matchSearch;
+    });
+    c.sortAppointments();
+  };
+
+  c.sortAppointments = function() {
+    c.filteredAppointments.sort(function(a, b) {
+      if (c.sortBy === 'date_asc')  return (a.scheduled_date || '').localeCompare(b.scheduled_date || '');
+      if (c.sortBy === 'date_desc') return (b.scheduled_date || '').localeCompare(a.scheduled_date || '');
+      if (c.sortBy === 'status')    return (a.status || '').localeCompare(b.status || '');
+      return 0;
+    });
+  };
+
+  // ── STATUS HELPERS ────────────────────────────────────────
+  var STATUS_MAP = {
+    'pending':   { color:'#f59e0b', bg:'#fef3c7', icon:'⏳', label:'Pending'   },
+    'confirmed': { color:'#3b82f6', bg:'#dbeafe', icon:'✅', label:'Confirmed' },
+    'completed': { color:'#10b981', bg:'#dcfce7', icon:'✔️', label:'Completed' },
+    'cancelled': { color:'#6b7280', bg:'#f1f5f9', icon:']]>🚫<![CDATA[', label:'Cancelled' },
+    'rejected':  { color:'#ef4444', bg:'#fee2e2', icon:'❌', label:'Rejected'  }
+  };
+  var _statusProp = function(s, prop, fallback) {
+    return (STATUS_MAP[s] && STATUS_MAP[s][prop]) ? STATUS_MAP[s][prop] : fallback;
+  };
+  c.getStatusColor = function(s) { return _statusProp(s, 'color', '#94a3b8'); };
+  c.getStatusBg    = function(s) { return _statusProp(s, 'bg',    '#f1f5f9'); };
+  c.getStatusIcon  = function(s) { return _statusProp(s, 'icon',  '•');       };
+  c.getStatusLabel = function(s) { return _statusProp(s, 'label', s);         };
+
+  c.getApprovalLabel = function(s) {
+    var m = { 'requested':'Approval Requested','approved':'✅ Approved','rejected':'❌ Rejected' };
+    return m[s] || s;
+  };
+  c.getPaymentLabel = function(s) {
+    var m = { 'paid':'✓ Paid','pending':'Payment Pending','unpaid':'Unpaid','refunded':'Refunded' };
+    return m[s] || (s || 'N/A');
+  };
+  c.getCategoryIcon = function(cat) {
+    var icons = { 'blood':']]>🩸<![CDATA[','urine':']]>🧪<![CDATA[','imaging':']]>🩻<![CDATA[','cardiology':'❤️',
+                  'neurology':']]>🧠<![CDATA[','genetics':']]>🧬<![CDATA[','pathology':']]>🔬<![CDATA[' };
+    if (!cat) return ']]>🔬<![CDATA[';
+    var k = cat.toLowerCase();
+    for (var key in icons) { if (k.indexOf(key) !== -1) return icons[key]; }
+    return ']]>🔬<![CDATA[';
+  };
+
+  c.canCancel = function(appt) {
+    return appt.status === 'pending' || appt.status === 'confirmed';
+  };
+
+  // CANCEL 
+  c.cancelAppointment = function(appt) {
+    if (!confirm('Are you sure you want to cancel appointment ' + appt.appointment_number + '?')) return;
+    c.server.get({ action: 'cancel_appointment', appointment_sys_id: appt.sys_id })
+      .then(function(response) {
+        if (response.data.success) {
+          appt.status = 'cancelled';
+          c.buildStats();
+          c.filterAppointments();
+          alert('Appointment cancelled successfully.');
+        } else {
+          alert('Error: ' + (response.data.error || 'Failed to cancel.'));
+        }
+      });
+  };
+
+  // ── MODAL ─────────────────────────────────────────────────
+  c.viewDetails = function(appt) { c.selectedAppt = appt; c.showModal = true;  };
+  c.closeModal  = function()     { c.showModal = false;   c.selectedAppt = null; };
+
+  // ── NAVIGATION ────────────────────────────────────────────
+  // KEY FIX: "Book New Test" now goes to correct page ID "test_catalog"
+  c.bookNew   = function() { _nav(PAGE_IDS.home); };
+  c.viewReport = function(appt) { _nav(PAGE_IDS.labReports); };
+}]]></client_script>
+        <controller_as>c</controller_as>
+        <css>.my-appts {&#13;
+  --primary: #0a2463;&#13;
+  --accent: #00b4d8;&#13;
+  --success: #10b981;&#13;
+  --warning: #f59e0b;&#13;
+  --danger: #ef4444;&#13;
+  --info: #3b82f6;&#13;
+  --gray-50: #f8fafc;&#13;
+  --gray-100: #f1f5f9;&#13;
+  --gray-200: #e2e8f0;&#13;
+  --gray-400: #94a3b8;&#13;
+  --gray-600: #475569;&#13;
+  --gray-800: #1e293b;&#13;
+  --white: #ffffff;&#13;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.07);&#13;
+  --shadow-md: 0 4px 14px rgba(0,0,0,0.09);&#13;
+  --radius: 14px;&#13;
+  font-family: 'Segoe UI', system-ui, sans-serif;&#13;
+  background: var(--gray-50);&#13;
+  min-height: 100vh;&#13;
+  padding: 0 0 60px;&#13;
+}&#13;
+&#13;
+/* ---------- HEADER ---------- */&#13;
+.appts-header {&#13;
+  background: linear-gradient(135deg, var(--primary) 0%, #1e3a8a 100%);&#13;
+  padding: 40px 40px 50px;&#13;
+  display: flex;&#13;
+  align-items: flex-start;&#13;
+  justify-content: space-between;&#13;
+  border-radius: 0 0 32px 32px;&#13;
+  flex-wrap: wrap;&#13;
+  gap: 20px;&#13;
+}&#13;
+&#13;
+.header-title {&#13;
+  font-size: 32px;&#13;
+  font-weight: 800;&#13;
+  color: var(--white);&#13;
+  margin: 0 0 8px;&#13;
+}&#13;
+&#13;
+.header-sub { color: #bfdbfe; margin: 0; font-size: 15px; }&#13;
+&#13;
+.btn-book-new {&#13;
+  display: inline-flex;&#13;
+  align-items: center;&#13;
+  gap: 8px;&#13;
+  padding: 12px 24px;&#13;
+  background: var(--accent);&#13;
+  color: var(--white);&#13;
+  border: none;&#13;
+  border-radius: 10px;&#13;
+  font-size: 15px;&#13;
+  font-weight: 700;&#13;
+  cursor: pointer;&#13;
+  transition: all 0.2s;&#13;
+  box-shadow: 0 4px 14px rgba(0,180,216,0.35);&#13;
+  white-space: nowrap;&#13;
+}&#13;
+&#13;
+.btn-book-new:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,180,216,0.45); }&#13;
+&#13;
+/* ---------- STATS BAR ---------- */&#13;
+.stats-bar {&#13;
+  display: flex;&#13;
+  gap: 16px;&#13;
+  padding: 24px 40px 0;&#13;
+  flex-wrap: wrap;&#13;
+}&#13;
+&#13;
+.stat-card {&#13;
+  flex: 1;&#13;
+  min-width: 120px;&#13;
+  background: var(--white);&#13;
+  border-radius: var(--radius);&#13;
+  border: 1px solid var(--gray-200);&#13;
+  padding: 16px 20px;&#13;
+  display: flex;&#13;
+  align-items: center;&#13;
+  gap: 14px;&#13;
+  box-shadow: var(--shadow-sm);&#13;
+  transition: box-shadow 0.2s;&#13;
+}&#13;
+&#13;
+.stat-card:hover { box-shadow: var(--shadow-md); }&#13;
+&#13;
+.stat-icon { font-size: 28px; }&#13;
+.stat-info { display: flex; flex-direction: column; }&#13;
+.stat-val { font-size: 22px; font-weight: 800; color: var(--primary); line-height: 1; }&#13;
+.stat-name { font-size: 12px; color: var(--gray-600); font-weight: 500; margin-top: 2px; }&#13;
+&#13;
+/* ---------- FILTER TABS ---------- */&#13;
+.filter-tabs {&#13;
+  display: flex;&#13;
+  gap: 8px;&#13;
+  padding: 24px 40px 0;&#13;
+  flex-wrap: wrap;&#13;
+}&#13;
+&#13;
+.filter-tab {&#13;
+  display: inline-flex;&#13;
+  align-items: center;&#13;
+  gap: 6px;&#13;
+  padding: 8px 18px;&#13;
+  border-radius: 24px;&#13;
+  border: 2px solid var(--gray-200);&#13;
+  background: var(--white);&#13;
+  color: var(--gray-600);&#13;
+  font-size: 14px;&#13;
+  font-weight: 600;&#13;
+  cursor: pointer;&#13;
+  transition: all 0.2s;&#13;
+}&#13;
+&#13;
+.filter-tab:hover { border-color: var(--accent); color: var(--accent); }&#13;
+&#13;
+.filter-tab.active {&#13;
+  background: var(--primary);&#13;
+  border-color: var(--primary);&#13;
+  color: var(--white);&#13;
+  box-shadow: 0 4px 12px rgba(10,36,99,0.25);&#13;
+}&#13;
+&#13;
+.tab-count {&#13;
+  background: rgba(255,255,255,0.25);&#13;
+  border-radius: 12px;&#13;
+  padding: 1px 7px;&#13;
+  font-size: 11px;&#13;
+  font-weight: 700;&#13;
+}&#13;
+&#13;
+.filter-tab:not(.active) .tab-count {&#13;
+  background: var(--gray-100);&#13;
+  color: var(--gray-600);&#13;
+}&#13;
+&#13;
+/* ---------- LIST CONTROLS ---------- */&#13;
+.list-controls {&#13;
+  display: flex;&#13;
+  align-items: center;&#13;
+  gap: 12px;&#13;
+  padding: 16px 40px;&#13;
+  flex-wrap: wrap;&#13;
+}&#13;
+&#13;
+.search-mini-wrap {&#13;
+  position: relative;&#13;
+  flex: 1;&#13;
+  max-width: 320px;&#13;
+}&#13;
+&#13;
+.search-mini-wrap .fa {&#13;
+  position: absolute;&#13;
+  left: 12px;&#13;
+  top: 50%;&#13;
+  transform: translateY(-50%);&#13;
+  color: var(--gray-400);&#13;
+}&#13;
+&#13;
+.search-mini {&#13;
+  padding: 9px 14px 9px 36px;&#13;
+  border: 2px solid var(--gray-200);&#13;
+  border-radius: 8px;&#13;
+  font-size: 14px;&#13;
+  width: 100%;&#13;
+  outline: none;&#13;
+  transition: border-color 0.2s;&#13;
+  box-sizing: border-box;&#13;
+}&#13;
+&#13;
+.search-mini:focus { border-color: var(--accent); }&#13;
+&#13;
+.sort-mini {&#13;
+  padding: 9px 14px;&#13;
+  border: 2px solid var(--gray-200);&#13;
+  border-radius: 8px;&#13;
+  font-size: 14px;&#13;
+  background: var(--white);&#13;
+  cursor: pointer;&#13;
+  outline: none;&#13;
+}&#13;
+&#13;
+.sort-mini:focus { border-color: var(--accent); }&#13;
+&#13;
+/* ---------- LOADING ---------- */&#13;
+.loading-center { text-align: center; padding: 60px; color: var(--gray-600); }&#13;
+.spinner-ring {&#13;
+  display: inline-block;&#13;
+  width: 44px; height: 44px;&#13;
+  border: 4px solid var(--gray-200);&#13;
+  border-top-color: var(--accent);&#13;
+  border-radius: 50%;&#13;
+  animation: spin 0.8s linear infinite;&#13;
+  margin-bottom: 14px;&#13;
+}&#13;
+@keyframes spin { to { transform: rotate(360deg); } }&#13;
+&#13;
+/* ---------- EMPTY STATE ---------- */&#13;
+.empty-appts { text-align: center; padding: 60px 40px; }&#13;
+.empty-emoji { font-size: 56px; margin-bottom: 16px; }&#13;
+.empty-appts h3 { font-size: 20px; color: var(--gray-800); margin: 0 0 8px; }&#13;
+.empty-appts p { color: var(--gray-600); margin: 0 0 20px; }&#13;
+&#13;
+.btn-book-first {&#13;
+  padding: 12px 28px;&#13;
+  background: var(--primary);&#13;
+  color: var(--white);&#13;
+  border: none;&#13;
+  border-radius: 10px;&#13;
+  font-size: 15px;&#13;
+  font-weight: 700;&#13;
+  cursor: pointer;&#13;
+  transition: background 0.2s;&#13;
+}&#13;
+&#13;
+.btn-book-first:hover { background: #1e3a8a; }&#13;
+&#13;
+/* ---------- APPOINTMENTS LIST ---------- */&#13;
+.appts-list {&#13;
+  padding: 8px 40px;&#13;
+  display: flex;&#13;
+  flex-direction: column;&#13;
+  gap: 16px;&#13;
+}&#13;
+&#13;
+/* ---------- APPOINTMENT CARD ---------- */&#13;
+.appt-card {&#13;
+  background: var(--white);&#13;
+  border-radius: var(--radius);&#13;
+  border: 1px solid var(--gray-200);&#13;
+  display: flex;&#13;
+  overflow: hidden;&#13;
+  box-shadow: var(--shadow-sm);&#13;
+  transition: box-shadow 0.2s, transform 0.2s;&#13;
+}&#13;
+&#13;
+.appt-card:hover {&#13;
+  box-shadow: var(--shadow-md);&#13;
+  transform: translateY(-2px);&#13;
+}&#13;
+&#13;
+.appt-accent-bar { width: 5px; flex-shrink: 0; }&#13;
+&#13;
+.appt-content { flex: 1; padding: 20px 24px; }&#13;
+&#13;
+/* TOP ROW */&#13;
+.appt-top {&#13;
+  display: flex;&#13;
+  align-items: flex-start;&#13;
+  justify-content: space-between;&#13;
+  margin-bottom: 14px;&#13;
+  gap: 12px;&#13;
+  flex-wrap: wrap;&#13;
+}&#13;
+&#13;
+.appt-title-group { display: flex; align-items: center; gap: 14px; }&#13;
+.appt-icon { font-size: 32px; }&#13;
+&#13;
+.appt-test-name {&#13;
+  font-size: 17px;&#13;
+  font-weight: 700;&#13;
+  color: var(--gray-800);&#13;
+  margin: 0 0 4px;&#13;
+}&#13;
+&#13;
+.appt-number { font-size: 12px; color: var(--gray-400); font-family: 'Courier New', monospace; }&#13;
+&#13;
+.appt-status-wrap { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }&#13;
+&#13;
+/* STATUS PILLS */&#13;
+.status-pill {&#13;
+  display: inline-flex;&#13;
+  align-items: center;&#13;
+  gap: 5px;&#13;
+  padding: 5px 14px;&#13;
+  border-radius: 20px;&#13;
+  font-size: 12px;&#13;
+  font-weight: 700;&#13;
+  text-transform: capitalize;&#13;
+}&#13;
+&#13;
+.approval-pill {&#13;
+  padding: 4px 12px;&#13;
+  border-radius: 20px;&#13;
+  font-size: 11px;&#13;
+  font-weight: 700;&#13;
+  text-transform: capitalize;&#13;
+}&#13;
+&#13;
+.approval-requested { background: #fef3c7; color: #92400e; }&#13;
+.approval-approved { background: #dcfce7; color: #166534; }&#13;
+.approval-rejected { background: #fee2e2; color: #991b1b; }&#13;
+&#13;
+/* META ROW */&#13;
+.appt-meta {&#13;
+  display: flex;&#13;
+  flex-wrap: wrap;&#13;
+  gap: 10px;&#13;
+  margin-bottom: 12px;&#13;
+}&#13;
+&#13;
+.meta-chip {&#13;
+  display: inline-flex;&#13;
+  align-items: center;&#13;
+  gap: 5px;&#13;
+  font-size: 13px;&#13;
+  color: var(--gray-600);&#13;
+  background: var(--gray-100);&#13;
+  padding: 4px 10px;&#13;
+  border-radius: 6px;&#13;
+}&#13;
+&#13;
+.meta-chip .fa { color: var(--accent); font-size: 12px; }&#13;
+&#13;
+/* INFO ROW */&#13;
+.appt-info-row {&#13;
+  display: flex;&#13;
+  flex-wrap: wrap;&#13;
+  gap: 8px;&#13;
+  margin-bottom: 10px;&#13;
+}&#13;
+&#13;
+.info-badge {&#13;
+  display: inline-flex;&#13;
+  align-items: center;&#13;
+  gap: 5px;&#13;
+  font-size: 12px;&#13;
+  padding: 4px 10px;&#13;
+  border-radius: 6px;&#13;
+  font-weight: 500;&#13;
+}&#13;
+&#13;
+.pay-paid { background: #dcfce7; color: #166534; }&#13;
+.pay-pending { background: #fef3c7; color: #92400e; }&#13;
+.pay-unpaid { background: #fee2e2; color: #991b1b; }&#13;
+.approval-info { background: #dbeafe; color: #1d4ed8; }&#13;
+.conf-badge { background: #f0fdf4; color: #166534; }&#13;
+&#13;
+/* NOTES */&#13;
+.appt-notes {&#13;
+  font-size: 13px;&#13;
+  color: var(--gray-600);&#13;
+  background: var(--gray-50);&#13;
+  border-left: 3px solid var(--gray-200);&#13;
+  padding: 6px 12px;&#13;
+  margin-bottom: 12px;&#13;
+  border-radius: 0 6px 6px 0;&#13;
+  font-style: italic;&#13;
+}&#13;
+&#13;
+/* REJECTION BANNER */&#13;
+.rejection-banner {&#13;
+  display: flex;&#13;
+  align-items: flex-start;&#13;
+  gap: 10px;&#13;
+  background: #fef2f2;&#13;
+  border: 1px solid #fecaca;&#13;
+  border-radius: 8px;&#13;
+  padding: 10px 14px;&#13;
+  margin-bottom: 12px;&#13;
+  font-size: 13px;&#13;
+  color: #991b1b;&#13;
+}&#13;
+&#13;
+/* ACTIONS */&#13;
+.appt-actions {&#13;
+  display: flex;&#13;
+  align-items: center;&#13;
+  gap: 10px;&#13;
+  flex-wrap: wrap;&#13;
+}&#13;
+&#13;
+.appt-action-btn {&#13;
+  display: inline-flex;&#13;
+  align-items: center;&#13;
+  gap: 6px;&#13;
+  padding: 7px 16px;&#13;
+  border-radius: 8px;&#13;
+  font-size: 13px;&#13;
+  font-weight: 600;&#13;
+  cursor: pointer;&#13;
+  border: none;&#13;
+  transition: all 0.2s;&#13;
+}&#13;
+&#13;
+.btn-view { background: #dbeafe; color: #1d4ed8; }&#13;
+.btn-view:hover { background: #bfdbfe; }&#13;
+&#13;
+.btn-cancel { background: #fee2e2; color: #b91c1c; }&#13;
+.btn-cancel:hover { background: #fecaca; }&#13;
+&#13;
+.btn-report { background: #dcfce7; color: #166534; }&#13;
+.btn-report:hover { background: #bbf7d0; }&#13;
+&#13;
+.date-chip {&#13;
+  margin-left: auto;&#13;
+  font-size: 11px;&#13;
+  color: var(--gray-400);&#13;
+  white-space: nowrap;&#13;
+}&#13;
+&#13;
+/* ---------- MODAL ---------- */&#13;
+.modal-overlay {&#13;
+  position: fixed;&#13;
+  inset: 0;&#13;
+  background: rgba(0,0,0,0.5);&#13;
+  z-index: 9999;&#13;
+  display: flex;&#13;
+  align-items: center;&#13;
+  justify-content: center;&#13;
+  padding: 20px;&#13;
+}&#13;
+&#13;
+.modal-box {&#13;
+  background: var(--white);&#13;
+  border-radius: 20px;&#13;
+  max-width: 560px;&#13;
+  width: 100%;&#13;
+  overflow: hidden;&#13;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);&#13;
+  animation: slideUp 0.3s ease;&#13;
+}&#13;
+&#13;
+@keyframes slideUp {&#13;
+  from { opacity: 0; transform: translateY(20px); }&#13;
+  to { opacity: 1; transform: translateY(0); }&#13;
+}&#13;
+&#13;
+.modal-header {&#13;
+  display: flex;&#13;
+  align-items: center;&#13;
+  justify-content: space-between;&#13;
+  padding: 20px 24px;&#13;
+  background: var(--primary);&#13;
+  color: var(--white);&#13;
+}&#13;
+&#13;
+.modal-header h3 { margin: 0; font-size: 18px; }&#13;
+&#13;
+.modal-close {&#13;
+  background: none;&#13;
+  border: none;&#13;
+  color: var(--white);&#13;
+  font-size: 20px;&#13;
+  cursor: pointer;&#13;
+  line-height: 1;&#13;
+  opacity: 0.8;&#13;
+  transition: opacity 0.2s;&#13;
+}&#13;
+&#13;
+.modal-close:hover { opacity: 1; }&#13;
+&#13;
+.modal-body { padding: 24px; }&#13;
+&#13;
+.detail-grid {&#13;
+  display: grid;&#13;
+  grid-template-columns: 1fr 1fr;&#13;
+  gap: 14px;&#13;
+}&#13;
+&#13;
+.detail-item {&#13;
+  display: flex;&#13;
+  flex-direction: column;&#13;
+  gap: 4px;&#13;
+}&#13;
+&#13;
+.detail-item.full { grid-column: 1 / -1; }&#13;
+&#13;
+.detail-key { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gray-400); letter-spacing: 0.4px; }&#13;
+.detail-val { font-size: 14px; font-weight: 600; color: var(--gray-800); }&#13;
+.detail-val.mono { font-family: 'Courier New', monospace; color: var(--primary); }&#13;
+.detail-val.paid-green { color: var(--success); font-size: 16px; }&#13;
+&#13;
+.modal-footer {&#13;
+  padding: 16px 24px;&#13;
+  border-top: 1px solid var(--gray-100);&#13;
+  display: flex;&#13;
+  justify-content: flex-end;&#13;
+}&#13;
+&#13;
+.btn-close-modal {&#13;
+  padding: 10px 24px;&#13;
+  background: var(--primary);&#13;
+  color: var(--white);&#13;
+  border: none;&#13;
+  border-radius: 8px;&#13;
+  font-weight: 700;&#13;
+  cursor: pointer;&#13;
+  transition: background 0.2s;&#13;
+}&#13;
+&#13;
+.btn-close-modal:hover { background: #1e3a8a; }&#13;
+&#13;
+/* ---------- RESPONSIVE ---------- */&#13;
+@media (max-width: 768px) {&#13;
+  .appts-header, .stats-bar, .filter-tabs, .list-controls, .appts-list {&#13;
+    padding-left: 16px; padding-right: 16px;&#13;
+  }&#13;
+  .stats-bar { gap: 10px; }&#13;
+  .stat-card { min-width: 100px; }&#13;
+  .appt-top { flex-direction: column; }&#13;
+  .date-chip { margin-left: 0; }&#13;
+  .detail-grid { grid-template-columns: 1fr; }&#13;
+}</css>
+        <data_table>sp_instance</data_table>
+        <demo_data/>
+        <description>Widget to display and manage functionalities</description>
+        <docs/>
+        <field_list/>
+        <has_preview>false</has_preview>
+        <id>my_appointments</id>
+        <internal>false</internal>
+        <link><![CDATA[function link(scope, element, attrs, controller) {
+  
+}]]></link>
+        <name>My Appointments</name>
+        <option_schema/>
+        <public>true</public>
+        <roles/>
+        <script><![CDATA[(function() {
+  data.appointments = [];
+
+  try {
+    var currentUser  = gs.getUser();
+    var userID       = gs.getUserID();
+    var userEmail    = currentUser.getEmail() || '';
+    var userName     = gs.getUserName() || '';
+
+    // ── APPROACH 1: Find patient records linked to this sys_user ──────
+    var patientSysIds = [];
+    var patientMap    = {};  // sys_id → true (dedup)
+
+    // By user reference field
+    var patGr = new GlideRecord('x_2056539_medica_0_patient');
+    patGr.addQuery('user', userID);
+    patGr.query();
+    while (patGr.next()) {
+      var pid = patGr.getUniqueValue();
+      if (!patientMap[pid]) { patientMap[pid] = true; patientSysIds.push(pid); }
+    }
+
+    // By email (catches cases where email in form ≠ ServiceNow user email)
+    if (userEmail) {
+      var patEmailGr = new GlideRecord('x_2056539_medica_0_patient');
+      patEmailGr.addQuery('email', userEmail);
+      patEmailGr.query();
+      while (patEmailGr.next()) {
+        var eid = patEmailGr.getUniqueValue();
+        if (!patientMap[eid]) { patientMap[eid] = true; patientSysIds.push(eid); }
+      }
+    }
+
+    // ── APPROACH 2: Find appointments created_by this user ────────────
+    // KEY FIX: catches bookings where patient email ≠ logged-in user email
+    var apptSysIds   = [];
+    var apptMap      = {};  // dedup
+    var apptDataMap  = {};  // sys_id → raw appointment GlideRecord data
+
+    var createdByGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+    createdByGr.addQuery('created_by', userID);
+    createdByGr.orderByDesc('sys_created_on');
+    createdByGr.query();
+    while (createdByGr.next()) {
+      var aid = createdByGr.getUniqueValue();
+      if (!apptMap[aid]) {
+        apptMap[aid] = true;
+        apptSysIds.push(aid);
+
+        // Also collect patient IDs from these appointments
+        var pRef = createdByGr.getValue('patient');
+        if (pRef && !patientMap[pRef]) {
+          patientMap[pRef] = true;
+          patientSysIds.push(pRef);
+        }
+      }
+    }
+
+    // ── APPROACH 3: Appointments linked to any patient record found ────
+    if (patientSysIds.length > 0) {
+      var apptPatGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+      apptPatGr.addQuery('patient', 'IN', patientSysIds.join(','));
+      apptPatGr.orderByDesc('sys_created_on');
+      apptPatGr.query();
+      while (apptPatGr.next()) {
+        var apid = apptPatGr.getUniqueValue();
+        if (!apptMap[apid]) {
+          apptMap[apid] = true;
+          apptSysIds.push(apid);
+        }
+      }
+    }
+
+    if (apptSysIds.length === 0) {
+      data.appointments = [];
+      return;
+    }
+
+    // ── FETCH FULL APPOINTMENT DATA ────────────────────────────────────
+    var finalGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+    finalGr.addQuery('sys_id', 'IN', apptSysIds.join(','));
+    finalGr.orderByDesc('sys_created_on');
+    finalGr.query();
+
+    while (finalGr.next()) {
+
+      // Get test details
+      var testName     = '';
+      var testCategory = '';
+      var testRef      = finalGr.getValue('test');
+      if (testRef) {
+        var testGr = new GlideRecord('x_2056539_medica_0_diagnostic_test');
+        if (testGr.get(testRef)) {
+          testName     = testGr.getValue('test_name') || '';
+          testCategory = testGr.getDisplayValue('category') || testGr.getValue('category') || '';
+        }
+      }
+
+      // Check if report exists
+      var hasReport = false;
+      var reportGr  = new GlideRecord('x_2056539_medica_0_report_table');
+      reportGr.addQuery('appointment', finalGr.getUniqueValue());
+      reportGr.setLimit(1);
+      reportGr.query();
+      if (reportGr.next()) { hasReport = true; }
+
+      // Approved by name
+      var approvedByName = '';
+      var approvedByRef  = finalGr.getValue('approved_by');
+      if (approvedByRef) {
+        var approverGr = new GlideRecord('sys_user');
+        if (approverGr.get(approvedByRef)) {
+          approvedByName = approverGr.getDisplayValue('name') || '';
+        }
+      }
+
+      // Format dates safely
+      var scheduledRaw = finalGr.getValue('scheduled_date') || '';
+      var scheduledDisplay = '';
+      if (scheduledRaw) {
+        try {
+          var gdt = new GlideDateTime(scheduledRaw);
+          scheduledDisplay = gdt.getLocalDate().getLocalDate();
+        } catch(dateErr) {
+          scheduledDisplay = scheduledRaw.split(' ')[0] || scheduledRaw;
+        }
+      }
+
+      var createdOn = finalGr.getDisplayValue('sys_created_on') || '';
+
+      data.appointments.push({
+        sys_id:              finalGr.getUniqueValue(),
+        appointment_number:  finalGr.getValue('appointment_number') || '',
+        status:              finalGr.getValue('status') || 'pending',
+        approval_status:     finalGr.getValue('approval_status') || '',
+        payment_status:      finalGr.getValue('payment_status') || '',
+        scheduled_date:      scheduledRaw,
+        scheduled_date_display: scheduledDisplay,
+        slot_time:           finalGr.getValue('slot_time') || '',
+        total_amount:        parseFloat(finalGr.getValue('total_amount')) || 0,
+        notes:               finalGr.getValue('notes') || '',
+        rejection_reason:    finalGr.getValue('rejection_reason') || '',
+        confirmation_sent:   finalGr.getValue('confirmation_sent') === '1' || finalGr.getValue('confirmation_sent') === true,
+        test_name:           testName,
+        test_category:       testCategory,
+        approved_by_name:    approvedByName,
+        has_report:          hasReport,
+        created_on_display:  createdOn
+      });
+    }
+
+    // ── HANDLE CANCEL ACTION ───────────────────────────────────────────
+    if (input && input.action === 'cancel_appointment') {
+      var cancelGr = new GlideRecord('x_2056539_medica_0_appointment_table');
+      if (cancelGr.get(input.appointment_sys_id)) {
+
+        // Verify ownership: created_by OR patient belongs to this user
+        var isOwner = false;
+        if (cancelGr.getValue('created_by') === userID) {
+          isOwner = true;
+        } else {
+          var cancelPatId = cancelGr.getValue('patient');
+          if (cancelPatId && patientSysIds.indexOf(cancelPatId) !== -1) {
+            isOwner = true;
+          }
+        }
+
+        if (isOwner) {
+          cancelGr.setValue('status', 'cancelled');
+          cancelGr.update();
+          data.success = true;
+
+          // Send cancellation email
+          try {
+            var patEmail2 = '';
+            var patGr2 = new GlideRecord('x_2056539_medica_0_patient');
+            if (patGr2.get(cancelGr.getValue('patient'))) {
+              patEmail2 = patGr2.getValue('email') || '';
+            }
+            if (patEmail2) {
+              var emailer = new GlideEmailOutbound();
+              emailer.setTo(patEmail2);
+              emailer.setSubject('Appointment Cancelled: ' + cancelGr.getValue('appointment_number'));
+              emailer.setBody('<p>Your appointment <strong>' +
+                cancelGr.getValue('appointment_number') +
+                '</strong> has been cancelled. If this was a mistake, please book again.</p>');
+              emailer.save();
+            }
+          } catch(emailErr) {
+            gs.warn('Cancel email error: ' + emailErr.message);
+          }
+
+        } else {
+          data.error = 'Unauthorized';
+        }
+      } else {
+        data.error = 'Appointment not found';
+      }
+    }
+
+  } catch(e) {
+    gs.error('My Appointments Widget Error: ' + e.message);
+    data.error = 'Failed to load appointments: ' + e.message;
+    data.appointments = [];
+  }
+})();]]></script>
+        <servicenow>false</servicenow>
+        <sys_class_name>sp_widget</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 10:01:34</sys_created_on>
+        <sys_id>425f787a834b0350428191d6feaad370</sys_id>
+        <sys_mod_count>7</sys_mod_count>
+        <sys_name>My Appointments</sys_name>
+        <sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope>
+        <sys_update_name>sp_widget_425f787a834b0350428191d6feaad370</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 11:23:28</sys_updated_on>
+        <template><![CDATA[<div class="my-appts">
+<!-- HEADER -->
+  <div class="appts-header">
+    <div class="header-left">
+      <h1 class="header-title">]]>📋<![CDATA[ My Appointments</h1>
+      <p class="header-sub">Track all your booked diagnostic tests in one place.</p>
+    </div>
+    <div class="header-right">
+      <button class="btn-book-new" ng-click="c.bookNew()">
+        <i class="fa fa-plus"></i> Book New Test
+      </button>
+    </div>
+  </div>
+
+  <!-- STATS BAR -->
+  <div class="stats-bar">
+    <div class="stat-card" ng-repeat="stat in c.stats">
+      <span class="stat-icon">{{stat.icon}}</span>
+      <div class="stat-info">
+        <span class="stat-val">{{stat.count}}</span>
+        <span class="stat-name">{{stat.label}}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- FILTER TABS -->
+  <div class="filter-tabs">
+    <button
+      class="filter-tab"
+      ng-repeat="tab in c.tabs"
+      ng-class="{'active': c.activeTab === tab.key}"
+      ng-click="c.setTab(tab.key)"
+    >
+      {{tab.label}}
+      <span class="tab-count" ng-if="tab.count > 0">{{tab.count}}</span>
+    </button>
+  </div>
+
+  <!-- SEARCH + SORT -->
+  <div class="list-controls">
+    <div class="search-mini-wrap">
+      <i class="fa fa-search"></i>
+      <input
+        type="text"
+        placeholder="Search appointments..."
+        ng-model="c.searchQuery"
+        ng-change="c.filterAppointments()"
+        class="search-mini"
+      />
+    </div>
+    <select ng-model="c.sortBy" ng-change="c.sortAppointments()" class="sort-mini">
+      <option value="date_desc">Newest First</option>
+      <option value="date_asc">Oldest First</option>
+      <option value="status">By Status</option>
+    </select>
+  </div>
+
+  <!-- LOADING -->
+  <div class="loading-center" ng-if="c.loading">
+    <div class="spinner-ring"></div>
+    <p>Loading your appointments...</p>
+  </div>
+
+  <!-- EMPTY STATE -->
+  <div class="empty-appts" ng-if="!c.loading && c.filteredAppointments.length === 0">
+    <div class="empty-emoji">]]>📭<![CDATA[</div>
+    <h3>No appointments found</h3>
+    <p ng-if="c.activeTab !== 'all'">No {{c.activeTab}} appointments yet.</p>
+    <p ng-if="c.activeTab === 'all'">You haven't booked any tests yet.</p>
+    <button class="btn-book-first" ng-click="c.bookNew()">Book Your First Test</button>
+  </div>
+
+  <!-- APPOINTMENTS LIST -->
+  <div class="appts-list" ng-if="!c.loading && c.filteredAppointments.length > 0">
+    <div
+      class="appt-card"
+      ng-repeat="appt in c.filteredAppointments"
+      ng-class="'appt-' + appt.status"
+    >
+
+      <!-- LEFT ACCENT BAR -->
+      <div class="appt-accent-bar" ng-style="{'background': c.getStatusColor(appt.status)}"></div>
+
+      <!-- CARD CONTENT -->
+      <div class="appt-content">
+
+        <!-- TOP ROW -->
+        <div class="appt-top">
+          <div class="appt-title-group">
+            <span class="appt-icon">{{c.getCategoryIcon(appt.test_category)}}</span>
+            <div>
+              <h3 class="appt-test-name">{{appt.test_name}}</h3>
+              <span class="appt-number">{{appt.appointment_number}}</span>
+            </div>
+          </div>
+          <div class="appt-status-wrap">
+            <span
+              class="status-pill"
+              ng-style="{'background': c.getStatusBg(appt.status), 'color': c.getStatusColor(appt.status)}"
+            >
+              {{c.getStatusIcon(appt.status)}} {{c.getStatusLabel(appt.status)}}
+            </span>
+            <span
+              class="approval-pill"
+              ng-if="appt.approval_status"
+              ng-class="'approval-' + appt.approval_status"
+            >
+              {{c.getApprovalLabel(appt.approval_status)}}
+            </span>
+          </div>
+        </div>
+
+        <!-- META ROW -->
+        <div class="appt-meta">
+          <div class="meta-chip">
+            <i class="fa fa-calendar"></i>
+            <span>{{appt.scheduled_date_display}}</span>
+          </div>
+          <div class="meta-chip">
+            <i class="fa fa-clock-o"></i>
+            <span>{{appt.slot_time || 'N/A'}}</span>
+          </div>
+          <div class="meta-chip">
+            <i class="fa fa-tag"></i>
+            <span>{{appt.test_category || 'General'}}</span>
+          </div>
+          <div class="meta-chip" ng-if="appt.total_amount">
+            <i class="fa fa-dollar"></i>
+            <span>${{appt.total_amount | number:2}}</span>
+          </div>
+        </div>
+
+        <!-- PAYMENT + APPROVAL STATUS -->
+        <div class="appt-info-row">
+          <div class="info-badge" ng-class="'pay-' + appt.payment_status">
+            <i class="fa fa-credit-card"></i>
+            Payment: <strong>{{c.getPaymentLabel(appt.payment_status)}}</strong>
+          </div>
+          <div class="info-badge approval-info" ng-if="appt.approved_by_name">
+            <i class="fa fa-user-check"></i>
+            Approved by: <strong>{{appt.approved_by_name}}</strong>
+          </div>
+          <div class="info-badge conf-badge" ng-if="appt.confirmation_sent">
+            <i class="fa fa-envelope-o"></i> Confirmation Sent
+          </div>
+        </div>
+
+        <!-- NOTES -->
+        <div class="appt-notes" ng-if="appt.notes">
+          <i class="fa fa-sticky-note-o"></i> <em>{{appt.notes}}</em>
+        </div>
+
+        <!-- REJECTION REASON -->
+        <div class="rejection-banner" ng-if="appt.rejection_reason">
+          <i class="fa fa-exclamation-circle"></i>
+          <div>
+            <strong>Rejection Reason:</strong>
+            <span>{{appt.rejection_reason}}</span>
+          </div>
+        </div>
+
+        <!-- ACTIONS -->
+        <div class="appt-actions">
+          <button
+            class="appt-action-btn btn-view"
+            ng-click="c.viewDetails(appt)"
+          >
+            <i class="fa fa-eye"></i> View Details
+          </button>
+          <button
+            class="appt-action-btn btn-cancel"
+            ng-if="c.canCancel(appt)"
+            ng-click="c.cancelAppointment(appt)"
+          >
+            <i class="fa fa-times"></i> Cancel
+          </button>
+          <button
+            class="appt-action-btn btn-report"
+            ng-if="appt.has_report"
+            ng-click="c.viewReport(appt)"
+          >
+            <i class="fa fa-file-text"></i> View Report
+          </button>
+          <span class="date-chip">
+            Booked: {{appt.created_on_display}}
+          </span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- DETAIL MODAL -->
+  <div class="modal-overlay" ng-if="c.showModal" ng-click="c.closeModal()">
+    <div class="modal-box" ng-click="$event.stopPropagation()">
+      <div class="modal-header">
+        <h3>Appointment Details</h3>
+        <button class="modal-close" ng-click="c.closeModal()">✕</button>
+      </div>
+      <div class="modal-body" ng-if="c.selectedAppt">
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="detail-key">Appointment #</span>
+            <span class="detail-val mono">{{c.selectedAppt.appointment_number}}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-key">Status</span>
+            <span class="detail-val">
+              <span class="status-pill" ng-style="{'background': c.getStatusBg(c.selectedAppt.status), 'color': c.getStatusColor(c.selectedAppt.status)}">
+                {{c.getStatusLabel(c.selectedAppt.status)}}
+              </span>
+            </span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-key">Test</span>
+            <span class="detail-val">{{c.selectedAppt.test_name}}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-key">Category</span>
+            <span class="detail-val">{{c.selectedAppt.test_category}}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-key">Scheduled Date</span>
+            <span class="detail-val">{{c.selectedAppt.scheduled_date_display}}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-key">Time Slot</span>
+            <span class="detail-val">{{c.selectedAppt.slot_time}}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-key">Total Amount</span>
+            <span class="detail-val paid-green">${{c.selectedAppt.total_amount | number:2}}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-key">Payment Status</span>
+            <span class="detail-val">{{c.getPaymentLabel(c.selectedAppt.payment_status)}}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-key">Approval Status</span>
+            <span class="detail-val">{{c.getApprovalLabel(c.selectedAppt.approval_status)}}</span>
+          </div>
+          <div class="detail-item full">
+            <span class="detail-key">Notes</span>
+            <span class="detail-val">{{c.selectedAppt.notes || 'None'}}</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-close-modal" ng-click="c.closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>]]></template>
+    </sp_widget>
+</record_update>
