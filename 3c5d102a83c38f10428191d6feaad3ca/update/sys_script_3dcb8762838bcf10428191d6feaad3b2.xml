@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update sys_domain="global" table="sys_script">
+    <sys_script action="INSERT_OR_UPDATE">
+        <abort_action>false</abort_action>
+        <access>package_private</access>
+        <action_delete>false</action_delete>
+        <action_insert>false</action_insert>
+        <action_query>false</action_query>
+        <action_update>true</action_update>
+        <active>true</active>
+        <add_message>false</add_message>
+        <advanced>true</advanced>
+        <change_fields>false</change_fields>
+        <client_callable>false</client_callable>
+        <collection>x_2056539_medica_0_appointment_table</collection>
+        <condition/>
+        <description/>
+        <execute_function>false</execute_function>
+        <filter_condition/>
+        <is_rest>false</is_rest>
+        <message/>
+        <name>Auto Create Report on Appointment Comple</name>
+        <order>100</order>
+        <priority>100</priority>
+        <rest_method/>
+        <rest_method_text/>
+        <rest_service/>
+        <rest_service_text/>
+        <rest_variables/>
+        <role_conditions/>
+        <script><![CDATA[(function executeRule(current, previous /*null when async*/) {
+  try {
+    // Only run when status just changed to 'completed'
+    if (current.status != 'completed' || previous.status == 'completed') {
+      return;
+    }
+    // Check if report already exists for this appointment
+    var existingReport = new GlideRecord('x_1883080_medica_0_report_table');
+    existingReport.addQuery('appointment', current.getUniqueValue());
+    existingReport.setLimit(1);
+    existingReport.query();
+    if (existingReport.next()) {
+      gs.info('Report already exists for appointment ' + current.appointment_number);
+      return;
+    }
+    // Generate report number
+    var reportNum = 'RPT-' + new Date().getFullYear() + '-' + current.appointment_number.replace('APPT-', '');
+    // Get test details
+    var testName = '';
+    var testCategory = '';
+    var testCode = '';
+    if (current.test) {
+      var testRef = current.test.getRefRecord();
+      if (testRef) {
+        testName = testRef.getValue('test_name') || '';
+        testCategory = testRef.getValue('category') || '';
+        testCode = testRef.getValue('test_code') || '';
+      }
+    }
+    // GENERATE REALISTIC TEST RESULTS BASED ON TEST TYPE
+    var findings = generateRealisticFindings(testName, testCategory, testCode);
+    // Create report record
+    var reportGr = new GlideRecord('x_1883080_medica_0_report_table');
+    reportGr.initialize();
+    reportGr.setValue('report_number', reportNum);
+    reportGr.setValue('appointment',   current.getUniqueValue());
+    reportGr.setValue('patient',       current.getValue('patient'));
+    reportGr.setValue('report_date',   new GlideDateTime());
+    reportGr.setValue('verified_by',   gs.getUserID());
+    try { reportGr.setValue('status', 'ready'); } catch(e) {}
+    reportGr.setValue('findings', findings);
+    var newReportId = reportGr.insert();
+    if (newReportId) {
+      gs.info('AUTO-CREATED: Report ' + reportNum + ' for appointment ' + current.appointment_number);
+ }
+} catch(e) {
+gs.error('Auto Report Creation Error: ' + e.message);
+}
+  // HELPER FUNCTION: Generate realistic findings based on test type
+  function generateRealisticFindings(testName, category, code) {
+    var testLower = (testName || '').toLowerCase();
+    var catLower = (category || '').toLowerCase();
+    // BLOOD TESTS
+    if (testLower.indexOf('blood') !== -1 || testLower.indexOf('cbc') !== -1 ||
+        testLower.indexOf('complete blood count') !== -1 || catLower.indexOf('blood') !== -1) {
+      return '<div style="font-family:Arial,sans-serif;">' +
+        '<h3 style="color:#1f2937;border-bottom:2px solid #10b981;padding-bottom:8px;">Complete Blood Count (CBC) Report</h3>' +
+        '<table style="width:100%;border-collapse:collapse;margin:16px 0;">' +
+        '<tr style="background:#f9fafb;"><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Parameter</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Result</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Normal Range</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Status</th></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">Hemoglobin</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">14.2 g/dL</td><td style="padding:10px;border:1px solid #e5e7eb;">13.5-17.5 g/dL</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">WBC Count</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">7,800 /μL</td><td style="padding:10px;border:1px solid #e5e7eb;">4,000-11,000 /μL</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">RBC Count</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">4.8 M/μL</td><td style="padding:10px;border:1px solid #e5e7eb;">4.5-5.5 M/μL</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">Platelet Count</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">245,000 /μL</td><td style="padding:10px;border:1px solid #e5e7eb;">150,000-400,000 /μL</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">Hematocrit</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">42.5%</td><td style="padding:10px;border:1px solid #e5e7eb;">38.0-50.0%</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '</table>' +
+        '<p style="color:#374151;line-height:1.6;"><strong>Interpretation:</strong> All blood parameters are within normal reference ranges. No abnormalities detected. Patient shows healthy hematological profile.</p>' +
+        '<p style="color:#6b7280;font-size:13px;margin-top:16px;"><em>Report generated on ' + new GlideDateTime().getDisplayValue() + '</em></p>' +
+        '</div>';
+    }
+    // URINE TESTS
+    else if (testLower.indexOf('urine') !== -1 || testLower.indexOf('urinalysis') !== -1 || catLower.indexOf('urine') !== -1) {
+      return '<div style="font-family:Arial,sans-serif;">' +
+        '<h3 style="color:#1f2937;border-bottom:2px solid #10b981;padding-bottom:8px;">Urinalysis Report</h3>' +
+        '<table style="width:100%;border-collapse:collapse;margin:16px 0;">' +
+        '<tr style="background:#f9fafb;"><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Parameter</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Result</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Normal Range</th></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">Color</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">Yellow</td><td style="padding:10px;border:1px solid #e5e7eb;">Pale to dark yellow</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">Appearance</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">Clear</td><td style="padding:10px;border:1px solid #e5e7eb;">Clear</td></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">pH</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">6.2</td><td style="padding:10px;border:1px solid #e5e7eb;">4.5-8.0</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">Specific Gravity</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">1.020</td><td style="padding:10px;border:1px solid #e5e7eb;">1.005-1.030</td></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">Protein</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">Negative</td><td style="padding:10px;border:1px solid #e5e7eb;">Negative</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">Glucose</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">Negative</td><td style="padding:10px;border:1px solid #e5e7eb;">Negative</td></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">Ketones</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">Negative</td><td style="padding:10px;border:1px solid #e5e7eb;">Negative</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">WBC</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">0-2 /HPF</td><td style="padding:10px;border:1px solid #e5e7eb;">0-5 /HPF</td></tr>' +
+        '</table>' +
+        '<p style="color:#374151;line-height:1.6;"><strong>Interpretation:</strong> Urinalysis results are within normal limits. No signs of infection, diabetes, or kidney dysfunction detected.</p>' +
+        '<p style="color:#6b7280;font-size:13px;margin-top:16px;"><em>Report generated on ' + new GlideDateTime().getDisplayValue() + '</em></p>' +
+        '</div>';
+    }
+    // X-RAY / IMAGING TESTS
+    else if (testLower.indexOf('x-ray') !== -1 || testLower.indexOf('xray') !== -1 ||
+             testLower.indexOf('chest') !== -1 || catLower.indexOf('imaging') !== -1 || catLower.indexOf('radiology') !== -1) {
+      return '<div style="font-family:Arial,sans-serif;">' +
+        '<h3 style="color:#1f2937;border-bottom:2px solid #10b981;padding-bottom:8px;">Chest X-Ray Report</h3>' +
+        '<div style="background:#f9fafb;padding:16px;border-radius:8px;margin:16px 0;">' +
+        '<p style="margin:8px 0;"><strong>Examination:</strong> Chest X-Ray (PA & Lateral View)</p>' +
+        '<p style="margin:8px 0;"><strong>Technique:</strong> Digital radiography</p>' +
+        '<p style="margin:8px 0;"><strong>Date Performed:</strong> ' + new GlideDateTime().getDisplayValue() + '</p>' +
+        '</div>' +
+        '<h4 style="color:#1f2937;margin-top:20px;">Findings:</h4>' +
+        '<ul style="color:#374151;line-height:1.8;">' +
+        '<li><strong>Heart:</strong> Normal in size and configuration. Cardiothoracic ratio within normal limits.</li>' +
+        '<li><strong>Lungs:</strong> Both lung fields are clear. No evidence of infiltrates, consolidation, or pleural effusion.</li>' +
+        '<li><strong>Mediastinum:</strong> Normal in width. No mediastinal mass or lymphadenopathy detected.</li>' +
+        '<li><strong>Bones:</strong> No acute bony abnormality. Thoracic spine alignment is normal.</li>' +
+        '<li><strong>Soft Tissues:</strong> Unremarkable.</li>' +
+        '</ul>' +
+        '<div style="background:#dcfce7;padding:16px;border-left:4px solid #10b981;margin:20px 0;">' +
+        '<p style="margin:0;color:#065f46;font-weight:600;">✓ IMPRESSION: Normal chest radiograph. No acute cardiopulmonary disease.</p>' +
+        '</div>' +
+        '<p style="color:#6b7280;font-size:13px;margin-top:16px;"><em>Report generated on ' + new GlideDateTime().getDisplayValue() + '</em></p>' +
+        '</div>';
+    }
+    // COVID-19 / PCR TESTS
+    else if (testLower.indexOf('covid') !== -1 || testLower.indexOf('pcr') !== -1 || testLower.indexOf('sars') !== -1) {
+      return '<div style="font-family:Arial,sans-serif;">' +
+        '<h3 style="color:#1f2937;border-bottom:2px solid #10b981;padding-bottom:8px;">COVID-19 RT-PCR Test Report</h3>' +
+        '<div style="background:#f9fafb;padding:16px;border-radius:8px;margin:16px 0;">' +
+        '<p style="margin:8px 0;"><strong>Test Method:</strong> Real-Time Reverse Transcription Polymerase Chain Reaction (RT-PCR)</p>' +
+        '<p style="margin:8px 0;"><strong>Sample Type:</strong> Nasopharyngeal Swab</p>' +
+        '<p style="margin:8px 0;"><strong>Date Collected:</strong> ' + new GlideDateTime().getDisplayValue() + '</p>' +
+        '</div>' +
+        '<table style="width:100%;border-collapse:collapse;margin:16px 0;">' +
+        '<tr style="background:#f9fafb;"><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Target Gene</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Result</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">CT Value</th></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">SARS-CoV-2 E Gene</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;color:#10b981;">Not Detected</td><td style="padding:10px;border:1px solid #e5e7eb;">--</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">SARS-CoV-2 N Gene</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;color:#10b981;">Not Detected</td><td style="padding:10px;border:1px solid #e5e7eb;">--</td></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">SARS-CoV-2 RdRp Gene</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;color:#10b981;">Not Detected</td><td style="padding:10px;border:1px solid #e5e7eb;">--</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">Internal Control</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;color:#10b981;">Positive</td><td style="padding:10px;border:1px solid #e5e7eb;">28.5</td></tr>' +
+        '</table>' +
+        '<div style="background:#dcfce7;padding:20px;border-left:4px solid #10b981;margin:20px 0;border-radius:4px;">' +
+        '<p style="margin:0 0 8px 0;font-size:18px;font-weight:700;color:#065f46;">✓ RESULT: NEGATIVE</p>' +
+        '<p style="margin:0;color:#065f46;">SARS-CoV-2 RNA not detected. No evidence of current COVID-19 infection.</p>' +
+        '</div>' +
+        '<p style="color:#6b7280;font-size:12px;line-height:1.6;"><strong>Note:</strong> A negative result does not entirely rule out COVID-19. Results should be considered in the context of clinical symptoms and exposure history. If symptoms persist, consider retesting or consult a healthcare provider.</p>' +
+        '<p style="color:#6b7280;font-size:13px;margin-top:16px;"><em>Report generated on ' + new GlideDateTime().getDisplayValue() + '</em></p>' +
+        '</div>';
+    }
+    // THYROID TESTS
+    else if (testLower.indexOf('thyroid') !== -1 || testLower.indexOf('tsh') !== -1 || testLower.indexOf('t3') !== -1 || testLower.indexOf('t4') !== -1) {
+      return '<div style="font-family:Arial,sans-serif;">' +
+        '<h3 style="color:#1f2937;border-bottom:2px solid #10b981;padding-bottom:8px;">Thyroid Function Test Report</h3>' +
+        '<table style="width:100%;border-collapse:collapse;margin:16px 0;">' +
+        '<tr style="background:#f9fafb;"><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Parameter</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Result</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Normal Range</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Status</th></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">TSH</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">2.5 μIU/mL</td><td style="padding:10px;border:1px solid #e5e7eb;">0.4-4.0 μIU/mL</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">Free T3</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">3.2 pg/mL</td><td style="padding:10px;border:1px solid #e5e7eb;">2.3-4.2 pg/mL</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">Free T4</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">1.3 ng/dL</td><td style="padding:10px;border:1px solid #e5e7eb;">0.8-1.8 ng/dL</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '</table>' +
+        '<p style="color:#374151;line-height:1.6;"><strong>Interpretation:</strong> Thyroid function tests are within normal reference ranges. TSH, T3, and T4 levels indicate normal thyroid activity. No evidence of hypothyroidism or hyperthyroidism.</p>' +
+        '<p style="color:#6b7280;font-size:13px;margin-top:16px;"><em>Report generated on ' + new GlideDateTime().getDisplayValue() + '</em></p>' +
+        '</div>';
+    }
+    // DEFAULT / GENERIC TEST
+    else {
+      return '<div style="font-family:Arial,sans-serif;">' +
+        '<h3 style="color:#1f2937;border-bottom:2px solid #10b981;padding-bottom:8px;">' + testName + ' - Test Report</h3>' +
+        '<div style="background:#f9fafb;padding:16px;border-radius:8px;margin:16px 0;">' +
+        '<p style="margin:8px 0;"><strong>Test Performed:</strong> ' + testName + '</p>' +
+        '<p style="margin:8px 0;"><strong>Test Code:</strong> ' + code + '</p>' +
+        '<p style="margin:8px 0;"><strong>Report Date:</strong> ' + new GlideDateTime().getDisplayValue() + '</p>' +
+        '</div>' +
+        '<h4 style="color:#1f2937;margin-top:20px;">Test Results:</h4>' +
+        '<table style="width:100%;border-collapse:collapse;margin:16px 0;">' +
+        '<tr style="background:#f9fafb;"><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Parameter</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Result</th><th style="padding:10px;text-align:left;border:1px solid #e5e7eb;">Status</th></tr>' +
+        '<tr><td style="padding:10px;border:1px solid #e5e7eb;">Primary Analysis</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">Within Normal Range</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ Normal</td></tr>' +
+        '<tr style="background:#f9fafb;"><td style="padding:10px;border:1px solid #e5e7eb;">Quality Check</td><td style="padding:10px;border:1px solid #e5e7eb;font-weight:600;">Passed</td><td style="padding:10px;border:1px solid #e5e7eb;color:#10b981;">✓ OK</td></tr>' +
+        '</table>' +
+        '<div style="background:#dcfce7;padding:16px;border-left:4px solid #10b981;margin:20px 0;">' +
+        '<p style="margin:0;color:#065f46;"><strong>Summary:</strong> Test completed successfully. All measured parameters are within acceptable clinical ranges. No abnormalities detected.</p>' +
+        '</div>' +
+        '<p style="color:#374151;line-height:1.6;"><strong>Recommendation:</strong> Results indicate normal findings. For detailed interpretation or if you have any concerns, please consult with your healthcare provider.</p>' +
+        '<p style="color:#6b7280;font-size:13px;margin-top:16px;"><em>Report generated on ' + new GlideDateTime().getDisplayValue() + '</em></p>' +
+        '</div>';
+    }
+  }
+})(current, previous);]]></script>
+        <sys_class_name>sys_script</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 01:52:43</sys_created_on>
+        <sys_domain>global</sys_domain>
+        <sys_domain_path>/</sys_domain_path>
+        <sys_id>3dcb8762838bcf10428191d6feaad3b2</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>Auto Create Report on Appointment Comple</sys_name>
+        <sys_overrides/>
+        <sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope>
+        <sys_update_name>sys_script_3dcb8762838bcf10428191d6feaad3b2</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 01:52:43</sys_updated_on>
+        <template/>
+        <when>after</when>
+    </sys_script>
+    <sys_translated_text action="delete_multiple" query="documentkey=3dcb8762838bcf10428191d6feaad3b2"/>
+</record_update>

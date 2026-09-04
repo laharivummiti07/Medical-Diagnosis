@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update sys_domain="global" table="sys_script">
+    <sys_script action="INSERT_OR_UPDATE">
+        <abort_action>false</abort_action>
+        <access>package_private</access>
+        <action_delete>false</action_delete>
+        <action_insert>false</action_insert>
+        <action_query>false</action_query>
+        <action_update>true</action_update>
+        <active>true</active>
+        <add_message>false</add_message>
+        <advanced>true</advanced>
+        <change_fields>false</change_fields>
+        <client_callable>false</client_callable>
+        <collection>x_2056539_medica_0_appointment_table</collection>
+        <condition/>
+        <description/>
+        <execute_function>false</execute_function>
+        <filter_condition/>
+        <is_rest>false</is_rest>
+        <message/>
+        <name>rejectionDetailsUpdation</name>
+        <order>100</order>
+        <priority>100</priority>
+        <rest_method/>
+        <rest_method_text/>
+        <rest_service/>
+        <rest_service_text/>
+        <rest_variables/>
+        <role_conditions/>
+        <script><![CDATA[```text
+(function executeRule(current, previous /*null when async*/ ) {
+    if (current.approval_status == "rejected") {
+        current.rejection_reason = "Cancelled/Rejected by the user";
+        current.notes = " ";
+        current.setValue("approved_by", null);
+    }
+    if (current.approval_status == "approved") {
+        current.notes = "Approved by the System Admin";
+        current.approved_by = gs.getUserID();
+        current.rejection_reason = " ";
+    }
+})(current, previous);
+```
+]]></script>
+        <sys_class_name>sys_script</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 01:56:52</sys_created_on>
+        <sys_domain>global</sys_domain>
+        <sys_domain_path>/</sys_domain_path>
+        <sys_id>07bf8b2e838bcf10428191d6feaad3ca</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>rejectionDetailsUpdation</sys_name>
+        <sys_overrides/>
+        <sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope>
+        <sys_update_name>sys_script_07bf8b2e838bcf10428191d6feaad3ca</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 01:56:52</sys_updated_on>
+        <template/>
+        <when>before</when>
+    </sys_script>
+    <sys_translated_text action="delete_multiple" query="documentkey=07bf8b2e838bcf10428191d6feaad3ca"/>
+</record_update>

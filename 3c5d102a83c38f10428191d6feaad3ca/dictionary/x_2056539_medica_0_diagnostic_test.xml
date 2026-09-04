@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element attributes="enforce_dot_walk_cross_scope_access=true" db_object_id="d0f3b0e683878f10428191d6feaad3c8" label="DIAGNOSTIC TEST" max_length="40" name="x_2056539_medica_0_diagnostic_test" type="collection">
+        <element choice="1" label="Active" max_length="255" name="active" type="boolean">
+            <choice>
+                <element inactive_on_update="false" label="True" value="true"/>
+                <element inactive_on_update="false" label="False" value="false"/>
+            </choice>
+        </element>
+        <element choice="1" label="Test Duration" max_length="255" name="test_duration" type="integer">
+            <choice>
+                <element inactive_on_update="false" label="60" sequence="2" value="60"/>
+                <element inactive_on_update="false" label="15" sequence="0" value="15"/>
+                <element inactive_on_update="false" label="15"/>
+                <element inactive_on_update="false" label="30" sequence="1" value="30"/>
+                <element inactive_on_update="false" label="30"/>
+            </choice>
+        </element>
+        <element label="Price" max_length="20" name="price" type="currency"/>
+        <element label="Description" max_length="40" name="description" type="string"/>
+        <element choice="3" label="Category" max_length="255" name="category" type="choice">
+            <choice>
+                <element inactive_on_update="false" label="Other" sequence="4" value="other"/>
+                <element inactive_on_update="false" label="BloodTest" sequence="0" value="blood test"/>
+                <element inactive_on_update="false" label="Ultrasound" sequence="7" value="ultrasound"/>
+                <element inactive_on_update="false" label="Radiology" sequence="6" value="radiology"/>
+                <element inactive_on_update="false" label="CT Scan" sequence="2" value="ct scan"/>
+                <element inactive_on_update="false" label="Pathology" sequence="5" value="pathology"/>
+                <element inactive_on_update="false" label="MRI" sequence="3" value="mri"/>
+                <element inactive_on_update="false" label="Cardiology" sequence="1" value="cardiology"/>
+            </choice>
+        </element>
+        <element label="Test Code" max_length="40" name="test_code" type="string"/>
+        <element label="Test Name" max_length="40" name="test_name" type="string"/>
+    </element>
+</database>
