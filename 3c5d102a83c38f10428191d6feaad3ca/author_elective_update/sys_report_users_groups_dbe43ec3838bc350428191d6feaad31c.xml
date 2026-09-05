@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_report_users_groups">
+    <sys_report_users_groups action="DELETE">
+        <group_id/>
+        <report_id display_value="">1be43ec3838bc350428191d6feaad31b</report_id>
+        <sys_class_name>sys_report_users_groups</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-05 13:12:54</sys_created_on>
+        <sys_id>dbe43ec3838bc350428191d6feaad31c</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>1be43ec3838bc350428191d6feaad31b</sys_name>
+        <sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope>
+        <sys_update_name>sys_report_users_groups_dbe43ec3838bc350428191d6feaad31c</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-05 13:12:54</sys_updated_on>
+        <user_id display_value="System Administrator">6816f79cc0a8016401c5a33be04be441</user_id>
+    </sys_report_users_groups>
+    <sys_update_version action="INSERT_OR_UPDATE">
+        <action>DELETE</action>
+        <application display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</application>
+        <file_path/>
+        <instance_id>778296dfdbe2bd14b1eb9027c5961957</instance_id>
+        <instance_name>dev220550</instance_name>
+        <name>sys_report_users_groups_dbe43ec3838bc350428191d6feaad31c</name>
+        <payload><![CDATA[<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_report_users_groups"><sys_report_users_groups action="INSERT_OR_UPDATE"><group_id/><report_id display_value="">1be43ec3838bc350428191d6feaad31b</report_id><sys_class_name>sys_report_users_groups</sys_class_name><sys_created_by>admin</sys_created_by><sys_created_on>2026-09-05 13:12:54</sys_created_on><sys_id>dbe43ec3838bc350428191d6feaad31c</sys_id><sys_mod_count>0</sys_mod_count><sys_name>1be43ec3838bc350428191d6feaad31b</sys_name><sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package><sys_policy/><sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope><sys_update_name>sys_report_users_groups_dbe43ec3838bc350428191d6feaad31c</sys_update_name><sys_updated_by>admin</sys_updated_by><sys_updated_on>2026-09-05 13:12:54</sys_updated_on><user_id display_value="System Administrator">6816f79cc0a8016401c5a33be04be441</user_id></sys_report_users_groups></record_update>]]></payload>
+        <payload_hash>-1067546478</payload_hash>
+        <record_name>1be43ec3838bc350428191d6feaad31b</record_name>
+        <reverted_from/>
+        <source>5eeda76e830fcf10428191d6feaad340</source>
+        <source_table>sys_update_set</source_table>
+        <state>previous</state>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-05 13:12:55</sys_created_on>
+        <sys_id>57e43ec3838bc350428191d6feaad321</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_recorded_at>1a071b35c320000001</sys_recorded_at>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-05 13:12:55</sys_updated_on>
+        <type>Report Users and Groups</type>
+        <update_guid>d3e43ec3148bc350d76c946ab6258b20</update_guid>
+        <update_guid_history>d3e43ec3148bc350d76c946ab6258b20:-1067546478</update_guid_history>
+    </sys_update_version>
+    <sys_metadata_delete action="INSERT_OR_UPDATE">
+        <sys_audit_delete/>
+        <sys_class_name>sys_metadata_delete</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-05 13:14:17</sys_created_on>
+        <sys_db_object display_value="" name="sys_report_users_groups">sys_report_users_groups</sys_db_object>
+        <sys_id>0e08f35409884945bdca3bd0e07a3141</sys_id>
+        <sys_metadata>dbe43ec3838bc350428191d6feaad31c</sys_metadata>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>1be43ec3838bc350428191d6feaad31b</sys_name>
+        <sys_package display_value="Medical Diagnosis Center" source="x_2056539_medica_0">3c5d102a83c38f10428191d6feaad3ca</sys_package>
+        <sys_parent/>
+        <sys_policy/>
+        <sys_scope display_value="Medical Diagnosis Center">3c5d102a83c38f10428191d6feaad3ca</sys_scope>
+        <sys_scope_delete display_value="">4ef17df27bab4c4dbc24d600694e8fb9</sys_scope_delete>
+        <sys_update_name>sys_report_users_groups_dbe43ec3838bc350428191d6feaad31c</sys_update_name>
+        <sys_update_version display_value="sys_report_users_groups_dbe43ec3838bc350428191d6feaad31c">57e43ec3838bc350428191d6feaad321</sys_update_version>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-05 13:14:17</sys_updated_on>
+    </sys_metadata_delete>
+</record_update>
