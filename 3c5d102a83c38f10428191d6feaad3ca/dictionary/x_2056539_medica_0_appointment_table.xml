@@ -23,7 +23,7 @@
             </choice>
         </element>
         <element label="Refund Amount" max_length="20" name="refund_amount" type="currency"/>
-        <element label="Appointment Number" max_length="40" name="appointment_number" type="string"/>
+        <element display="true" label="Appointment Number" max_length="40" name="appointment_number" type="string"/>
         <element label="Total Amount" max_length="20" name="total_amount" type="currency"/>
         <element label="Created By" max_length="32" name="created_by" reference="sys_user" type="reference"/>
         <element label="Scheduled Date" max_length="255" name="scheduled_date" type="glide_date_time"/>
