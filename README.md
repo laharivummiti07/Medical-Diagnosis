@@ -286,6 +286,6 @@ Example:
 
 ---
 
-## 🙏 Acknowledgement
+##  Acknowledgement
 
 This project was developed as part of the **SmartBridge ServiceNow Internship Program** using the ServiceNow platform. It demonstrates healthcare workflow automation through Service Portal, Flow Designer, Business Rules, Notifications, and Role-Based Access Control.
